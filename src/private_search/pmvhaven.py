@@ -13,7 +13,6 @@ from urllib.parse import urlparse
 
 import requests
 
-
 VIDEO_PATH_PATTERN = re.compile(r"^/video/", re.IGNORECASE)
 VIDEO_ID_PATTERN = re.compile(
     r"(?P<video_id>[a-f0-9]{24})(?:[^a-f0-9]|$)", re.IGNORECASE

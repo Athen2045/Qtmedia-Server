@@ -1,6 +1,5 @@
 from private_search.search import (
     ADAPTERS,
-    SearchCandidate,
     VideoResult,
     deduplicate,
     filter_rejection_reason,

@@ -4,9 +4,10 @@ import re
 import shutil
 from urllib.parse import urlparse
 
+import requests
+
 from .config import DOWNLOAD_ROOT, ensure_runtime_directories
 from .pmvhaven import fetch_metadata, is_pmvhaven_url
-
 
 # Optional proxy configuration. Leave empty to connect directly.
 PROXIES = {}

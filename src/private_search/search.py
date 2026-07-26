@@ -12,9 +12,11 @@ import re
 import signal
 import sqlite3
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import (  # pylint: disable=no-name-in-module
+    ThreadPoolExecutor,
+    as_completed,
+)
 from dataclasses import dataclass
-from pathlib import Path
 from urllib.parse import quote_plus, urljoin, urlparse
 
 import requests
@@ -22,7 +24,6 @@ from bs4 import BeautifulSoup
 
 from .config import DOWNLOAD_ROOT, SEARCH_CACHE, ensure_runtime_directories
 from .pmvhaven import fetch_metadata, is_pmvhaven_url
-
 
 ensure_runtime_directories()
 OUTPUT_FOLDER = DOWNLOAD_ROOT
@@ -213,12 +214,10 @@ def text_passes_filters(
     excludes: list[str],
 ) -> bool:
     text = f"{title} {url}".casefold()
-    if any(term.casefold() in text for term in excludes):
-        return False
     # Search-page anchor text is often a duration, username, or thumbnail
     # label. Include filters are therefore applied after yt-dlp extracts the
     # canonical title; only exclusions are safe at this early stage.
-    return True
+    return not any(term.casefold() in text for term in excludes)
 
 
 def init_cache() -> None:
@@ -273,7 +272,6 @@ def cache_result(result: VideoResult, cache_key: str | None = None) -> None:
                 ),
             ),
         )
-    return None
 
 
 def inspect_candidate(candidate: SearchCandidate) -> VideoResult | None:
@@ -373,7 +371,7 @@ def search(
         for future in as_completed(searches):
             try:
                 found_candidates = future.result()
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 - isolate one failed worker
                 print(f"Search worker failed: {error}")
                 continue
             for candidate in found_candidates:
@@ -399,7 +397,7 @@ def search(
             print(f"Inspected {index}/{len(inspections)}: {candidate.title}")
             try:
                 result = future.result()
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 - isolate one failed worker
                 print(f"[{candidate.site}] inspection failed: {error}")
                 extraction_failures += 1
                 continue
@@ -476,7 +474,7 @@ def print_menu(filters: list[str], excludes: list[str], min_views: int) -> None:
     print(f"{CYAN}+{'-' * width}+{RESET}")
     print(f"{CYAN}|{RESET} Applied parameters:                                                {CYAN}|{RESET}")
     print(f"{CYAN}|{RESET}   Include filters : {YELLOW}{filter_text[:52]:<52}{RESET} {CYAN}|{RESET}")
-    print(f"{CYAN}|{RESET}   Minimum views   : {YELLOW}{str(min_views):<52}{RESET} {CYAN}|{RESET}")
+    print(f"{CYAN}|{RESET}   Minimum views   : {YELLOW}{min_views!s:<52}{RESET} {CYAN}|{RESET}")
     print(f"{CYAN}+{'-' * width}+{RESET}")
     print(f"{CYAN}|{RESET} {GREEN}1{RESET} Search titles       {GREEN}2{RESET} Include filters     {GREEN}3{RESET} Show last results   {CYAN}|{RESET}")
     print(f"{CYAN}|{RESET} {GREEN}4{RESET} Inspect direct URL  {GREEN}5{RESET} Download             {GREEN}6{RESET} Quit                 {CYAN}|{RESET}")
