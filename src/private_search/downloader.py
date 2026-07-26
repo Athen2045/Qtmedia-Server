@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 import requests
 
 from .config import DOWNLOAD_ROOT, ensure_runtime_directories
+from .download_control import DownloadCancellation, DownloadCancelled
 from .pmvhaven import fetch_metadata, is_pmvhaven_url
 
 # Optional proxy configuration. Leave empty to connect directly.
@@ -91,12 +92,20 @@ def download_video(video_url):
             options["outtmpl"] = os.path.join(
                 OUTPUT_FOLDER, f"{output_title} [{output_id}].%(ext)s"
             )
-        with yt_dlp.YoutubeDL(options) as ydl:
-            error_code = ydl.download([download_url])
+        cancellation = DownloadCancellation()
+        options["progress_hooks"] = [cancellation.progress_hook]
+        cancellation.start()
+        try:
+            with yt_dlp.YoutubeDL(options) as ydl:
+                error_code = ydl.download([download_url])
+        finally:
+            cancellation.stop()
         if error_code:
             print(f"Download failed for {video_url} (exit code {error_code})")
         else:
             print(f"Download complete: {OUTPUT_FOLDER}")
+    except DownloadCancelled:
+        print("Download cancelled by user.")
     except yt_dlp.utils.DownloadError as error:
         print(f"Error downloading {video_url}: {error}")
 

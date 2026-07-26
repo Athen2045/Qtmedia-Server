@@ -23,6 +23,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from .config import DOWNLOAD_ROOT, SEARCH_CACHE, ensure_runtime_directories
+from .download_control import DownloadCancellation, DownloadCancelled
 from .pmvhaven import fetch_metadata, is_pmvhaven_url
 
 ensure_runtime_directories()
@@ -499,8 +500,17 @@ def download_selected(results: list[VideoResult]) -> None:
     OUTPUT_FOLDER.mkdir(exist_ok=True)
     print(f"Downloading: {result.title}")
     try:
-        with yt_dlp.YoutubeDL(ydl_options()) as ydl:
-            ydl.download([result.url])
+        cancellation = DownloadCancellation()
+        options = ydl_options()
+        options["progress_hooks"] = [cancellation.progress_hook]
+        cancellation.start()
+        try:
+            with yt_dlp.YoutubeDL(options) as ydl:
+                ydl.download([result.url])
+        finally:
+            cancellation.stop()
+    except DownloadCancelled:
+        print("Download cancelled by user.")
     except yt_dlp.utils.DownloadError as error:
         print(f"Download failed: {error}")
 
