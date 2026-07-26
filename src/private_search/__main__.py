@@ -1,3 +1,5 @@
+"""Package entry point for the search CLI."""
+
 from .search import main
 
 

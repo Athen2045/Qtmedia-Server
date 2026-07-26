@@ -9,8 +9,8 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
-import sqlite3
 import signal
+import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -287,7 +287,7 @@ def inspect_candidate(candidate: SearchCandidate) -> VideoResult | None:
     if is_pmvhaven_url(candidate.url):
         try:
             pmv_metadata = fetch_metadata(candidate.url)
-        except (requests.RequestException, ValueError) as error:
+        except (requests.RequestException, TypeError, ValueError) as error:
             print(f"[PMVHaven] API metadata unavailable: {error}")
 
     try:

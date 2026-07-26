@@ -7,9 +7,11 @@ import sys
 from pathlib import Path
 
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+def main() -> None:
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+    from private_search.search import main as search_main
 
-from private_search.search import main
+    search_main()
 
 
 if __name__ == "__main__":

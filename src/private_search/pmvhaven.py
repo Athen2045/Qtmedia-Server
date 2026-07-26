@@ -14,8 +14,10 @@ from urllib.parse import urlparse
 import requests
 
 
-VIDEO_PATH_PATTERN = re.compile(r"^/video/", re.I)
-VIDEO_ID_PATTERN = re.compile(r"(?P<video_id>[a-f0-9]{24})(?:[^a-f0-9]|$)", re.I)
+VIDEO_PATH_PATTERN = re.compile(r"^/video/", re.IGNORECASE)
+VIDEO_ID_PATTERN = re.compile(
+    r"(?P<video_id>[a-f0-9]{24})(?:[^a-f0-9]|$)", re.IGNORECASE
+)
 API_TEMPLATE = "https://pmvhaven.com/api/videos/{video_id}"
 REQUEST_TIMEOUT = 20
 
@@ -66,7 +68,7 @@ def fetch_metadata(url: str, session: requests.Session | None = None) -> PMVHave
     payload = response.json()
     data = payload.get("data", payload)
     if not isinstance(data, dict):
-        raise ValueError("PMVHaven API returned an unexpected response")
+        raise TypeError("PMVHaven API returned an unexpected response")
 
     title = str(data.get("title") or video_id).strip()
     tags = tuple(str(item) for item in (data.get("tags") or []) if item)

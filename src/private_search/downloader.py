@@ -1,5 +1,5 @@
-import os
 import importlib.util
+import os
 import re
 import shutil
 from urllib.parse import urlparse
@@ -69,9 +69,10 @@ def download_video(video_url):
                 print("PMVHaven API did not provide a downloadable media URL.")
                 return
             download_url = metadata.media_url
+            print(f"PMVHaven media source: {download_url}")
             output_title = re.sub(r"[\\/:*?\"<>|]+", "_", metadata.title).strip() or "video"
             output_id = metadata.video_id
-        except Exception as error:
+        except (requests.RequestException, TypeError, ValueError) as error:
             print(f"PMVHaven API validation failed: {error}")
             return
 
