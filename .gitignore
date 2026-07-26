@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local runtime data
+var/downloads/
+var/cache/
+*.sqlite3
+*.db
+
+# macOS and editor files
+.DS_Store
+.idea/
+.vscode/
+
+# Local secrets/configuration
+.env
+.env.*
+!.env.example
