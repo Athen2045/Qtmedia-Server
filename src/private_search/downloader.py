@@ -1,4 +1,3 @@
-import importlib.util
 import os
 import re
 import shutil
@@ -8,17 +7,24 @@ import requests
 
 from .config import DOWNLOAD_ROOT, ensure_runtime_directories
 from .download_control import DownloadCancellation, DownloadCancelled
+from . import http_client
 from .pmvhaven import fetch_metadata, is_pmvhaven_url
+from .search import adapter_for_host, impersonate_for_url, is_video_candidate
 
-# Optional proxy configuration. Leave empty to connect directly.
-PROXIES = {}
+# Optional proxy configuration, set via the PRIVATE_SEARCH_PROXY env var.
+# Leave unset to connect directly.
+PROXIES = {"https": proxy} if (proxy := os.getenv("PRIVATE_SEARCH_PROXY", "").strip()) else {}
 
 ensure_runtime_directories()
 OUTPUT_FOLDER = str(DOWNLOAD_ROOT)
 
 
 def is_direct_video_url(video_url):
-    """Reject site homepages and known non-video URLs before yt-dlp runs."""
+    """Reject site homepages and known non-video URLs before yt-dlp runs.
+
+    Delegates to the same SiteAdapter rules the search pipeline uses (see
+    search.py), so a site rule only needs to change in one place.
+    """
     parsed = urlparse(video_url)
     host = parsed.netloc.casefold().split(":", 1)[0]
     path = parsed.path.rstrip("/")
@@ -28,16 +34,13 @@ def is_direct_video_url(video_url):
     if "..." in video_url:
         return False
 
-    if host.endswith("xvideos.com"):
-        return bool(re.search(r"/video(?:\.|\d)[^/]*", path))
-    if host.endswith("xhamster.com"):
-        return path.startswith("/videos/") and len(path) > len("/videos/")
-    if host.endswith("spankbang.com"):
-        return "/video/" in f"{path}/" and len(path.rsplit("/video/", 1)[-1]) > 0
+    adapter = adapter_for_host(host)
+    if adapter is not None:
+        return is_video_candidate(adapter, path)
     return True
 
 
-def build_ydl_options():
+def build_ydl_options(video_url=None):
     options = {
         "format": "bestvideo+bestaudio/best",
         "noplaylist": True,
@@ -46,13 +49,20 @@ def build_ydl_options():
     }
     if PROXIES.get("https"):
         options["proxy"] = PROXIES["https"]
-    # Cloudflare-protected sites may require browser impersonation. This
-    # option is only enabled when yt-dlp's optional curl-cffi dependency is
-    # installed.
-    if importlib.util.find_spec("curl_cffi"):
-        options["extractor_args"] = {
-            "generic": {"impersonate": [""]},
-        }
+    # Cloudflare-protected sites may require browser impersonation, on the
+    # video page as much as on the search page. The top-level option covers
+    # every request yt-dlp makes; the ``extractor_args`` form this replaced
+    # only reached the generic extractor, so site-specific extractors still
+    # presented yt-dlp's own fingerprint and got reset.
+    target = http_client.ytdlp_impersonate_target(
+        impersonate_for_url(video_url) if video_url else None
+    )
+    if target:
+        from yt_dlp.networking.impersonate import (  # pylint: disable=import-outside-toplevel
+            ImpersonateTarget,
+        )
+
+        options["impersonate"] = ImpersonateTarget.from_str(target)
     return options
 
 
@@ -87,7 +97,7 @@ def download_video(video_url):
     import yt_dlp
 
     try:
-        options = build_ydl_options()
+        options = build_ydl_options(video_url)
         if output_title and output_id:
             options["outtmpl"] = os.path.join(
                 OUTPUT_FOLDER, f"{output_title} [{output_id}].%(ext)s"

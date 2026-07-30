@@ -6,7 +6,7 @@ site adapters, then lets yt-dlp inspect and download only direct video URLs.
 
 from __future__ import annotations
 
-import importlib.util
+import difflib
 import json
 import re
 import signal
@@ -17,13 +17,16 @@ from concurrent.futures import (  # pylint: disable=no-name-in-module
     as_completed,
 )
 from dataclasses import dataclass
-from urllib.parse import quote_plus, urljoin, urlparse
+from urllib.parse import parse_qsl, quote_plus, urlencode, urljoin, urlparse, urlunparse
 
 import requests
 from bs4 import BeautifulSoup
 
+from . import http_client
 from .config import DOWNLOAD_ROOT, SEARCH_CACHE, ensure_runtime_directories
 from .download_control import DownloadCancellation, DownloadCancelled
+from .lustpress import is_configured as lustpress_is_configured
+from .lustpress import search_site as lustpress_search_site
 from .pmvhaven import fetch_metadata, is_pmvhaven_url
 
 ensure_runtime_directories()
@@ -37,8 +40,24 @@ REQUEST_TIMEOUT = 20
 MAX_CANDIDATES_PER_SITE = 20
 SEARCH_WORKERS = 8
 INSPECTION_WORKERS = 4
+# Workers start one short beat apart instead of all at once. The full pool
+# still runs concurrently — this only spreads the initial burst of TLS
+# handshakes and first response bodies, which is the part that hits the
+# network stack hardest, at a cost of well under a second overall.
+SEARCH_STAGGER_SECONDS = 0.12
 CACHE_TTL_SECONDS = 24 * 60 * 60
-USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/126 Safari/537.36"
+SEARCH_PAGE_CACHE_TTL_SECONDS = 10 * 60
+# Exceptions expected from a single search/inspection worker: network, cache,
+# and parsing failures. Left narrow so a genuine bug still surfaces instead of
+# being silently absorbed as a "worker failed" message.
+WORKER_EXCEPTIONS = (
+    *http_client.HTTP_EXCEPTIONS,
+    sqlite3.Error,
+    ValueError,
+    KeyError,
+    TypeError,
+    OSError,
+)
 
 
 # ANSI colors are supported by macOS Terminal and most modern terminals.
@@ -58,6 +77,16 @@ class SiteAdapter:
     disabled_reason: str | None = None
     fallback_search_urls: tuple[str, ...] = ()
     query_style: str = "plus"
+    # Browser TLS fingerprint to present (see http_client.new_session). None
+    # uses the shared default; set per-adapter when a site's bot detection
+    # blocks that default specifically.
+    impersonate: str | None = None
+    # HTML element id to restrict anchor scanning to. Some sites render a
+    # site-wide nav/header widget (trending or featured videos) whose links
+    # match the same video URL pattern as real results, contaminating every
+    # search regardless of query; scoping to the actual results container
+    # avoids that. None scans the whole page (the common case).
+    result_container_id: str | None = None
 
     def make_search_urls(self, query: str) -> tuple[str, ...]:
         if self.search_url is None:
@@ -70,16 +99,23 @@ class SiteAdapter:
         return tuple(template.format(query=query_value) for template in templates)
 
 
+def adapter_for_host(host: str) -> SiteAdapter | None:
+    """Return the configured adapter whose search domain matches a host, if any."""
+    host = host.casefold().removeprefix("www.")
+    for adapter in ADAPTERS:
+        configured_host = urlparse(adapter.search_url or "").netloc.casefold().removeprefix("www.")
+        if configured_host and (host == configured_host or host.endswith(f".{configured_host}")):
+            return adapter
+    return None
+
+
 def site_name_for_url(url: str) -> str:
     """Return a readable configured site name for a direct URL."""
     if is_pmvhaven_url(url):
         return "PMVHaven"
     host = urlparse(url).netloc.casefold().removeprefix("www.")
-    for adapter in ADAPTERS:
-        configured_host = urlparse(adapter.search_url or "").netloc.casefold().removeprefix("www.")
-        if configured_host and (host == configured_host or host.endswith(f".{configured_host}")):
-            return adapter.name
-    return host or "Direct URL"
+    adapter = adapter_for_host(host)
+    return adapter.name if adapter else (host or "Direct URL")
 
 
 @dataclass
@@ -106,15 +142,26 @@ class SearchCandidate:
 ADAPTERS = [
     SiteAdapter("XVideos", "https://www.xvideos.com/?k={query}", r"/video(?:\.|\d)"),
     SiteAdapter("XHamster", "https://xhamster.com/search/{query}", r"/videos/"),
-    SiteAdapter("SpankBang", "https://spankbang.com/s/{query}/", r"/video/"),
+    SiteAdapter(
+        "SpankBang",
+        "https://spankbang.com/s/{query}/",
+        r"/video/",
+        # Cloudflare on this site challenges Chrome's TLS fingerprint (the
+        # shared default) but passes Safari's.
+        impersonate="safari184",
+        # Without this, the header's hover-preview nav dropdown (identical
+        # "trending" links on every page, unrelated to the query) gets
+        # scraped ahead of the real results in id="search_page".
+        result_container_id="search_page",
+    ),
     SiteAdapter(
         "TNAFlix",
-        "https://www.tnaflix.com/search/{query}",
+        # TNAFlix's current search form posts to ?what=; the older ?search=
+        # and path-style /search/{query} URLs still return HTTP 200 but with
+        # an empty "No results" page, which looks like a legitimate zero-hit
+        # search rather than a stale URL.
+        "https://www.tnaflix.com/search?what={query}",
         r"/[^/]+/[^/]+/video\d+|/video\d+",
-        fallback_search_urls=(
-            "https://www.tnaflix.com/search?search={query}",
-            "https://www.tnaflix.com/search.php?search={query}",
-        ),
     ),
     SiteAdapter(
         "YouJizz",
@@ -134,7 +181,30 @@ ADAPTERS = [
 ]
 
 
-def ydl_options() -> dict:
+def impersonate_for_url(url: str) -> str | None:
+    """The fingerprint profile configured for the site hosting a URL.
+
+    Video pages live on the same domain as the search pages, so a site that
+    needed a specific profile to be scraped needs the same one to be inspected
+    or downloaded. None falls through to the shared default.
+    """
+    adapter = adapter_for_host(urlparse(url).netloc)
+    return adapter.impersonate if adapter else None
+
+
+def ydl_options(impersonate: str | None = None) -> dict:
+    """yt-dlp options, impersonating a real browser like the scrapers do.
+
+    Sites that reject a plain TLS fingerprint on their search pages reject it
+    on their video pages too, so yt-dlp's own webpage fetches get reset or
+    timed out unless they present the same fingerprint. The top-level
+    ``impersonate`` option covers every request yt-dlp makes; the narrower
+    ``extractor_args`` form this replaced only reached the *generic* extractor,
+    leaving site-specific extractors (YouPorn, TNAFlix, ...) unimpersonated.
+
+    ``impersonate`` is a curl_cffi profile name, normally the one configured on
+    the candidate's adapter; None uses the shared default.
+    """
     options = {
         "format": "bestvideo+bestaudio/best",
         "noplaylist": True,
@@ -142,14 +212,60 @@ def ydl_options() -> dict:
         "outtmpl": str(OUTPUT_FOLDER / "%(title)s [%(id)s].%(ext)s"),
         "quiet": True,
         "no_warnings": True,
+        # These sites reset connections intermittently rather than cleanly
+        # refusing, the same way their search backends do; a single attempt
+        # would otherwise report an available video as unavailable.
+        "retries": http_client.RETRY_ATTEMPTS,
+        "extractor_retries": http_client.RETRY_ATTEMPTS,
+        "socket_timeout": REQUEST_TIMEOUT,
     }
-    if importlib.util.find_spec("curl_cffi"):
-        options["extractor_args"] = {"generic": {"impersonate": [""]}}
+    target = http_client.ytdlp_impersonate_target(impersonate)
+    if target:
+        from yt_dlp.networking.impersonate import (  # pylint: disable=import-outside-toplevel
+            ImpersonateTarget,
+        )
+
+        options["impersonate"] = ImpersonateTarget.from_str(target)
     return options
 
 
 def normalize_title(title: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", title.casefold()).strip()
+
+
+def canonical_url(url: str) -> str:
+    """Remove fragments and common search tracking parameters for deduplication."""
+    parsed = urlparse(url)
+    tracking = {"cp", "from", "hot", "q", "ref", "utm_campaign", "utm_medium", "utm_source"}
+    query = urlencode([
+        (key, value) for key, value in parse_qsl(parsed.query)
+        if key.casefold() not in tracking
+    ])
+    return urlunparse((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", query, ""))
+
+
+DURATION_LABEL_PATTERN = re.compile(
+    r"^(?:(?:hd|4k|[a-z]{2})\s+)?(?:\d{1,3}:\d{2}(?::\d{2})?|\d{1,4}m)(?:\s+(?:hd|4k|\d{3,4}p))?$",
+    re.IGNORECASE,
+)
+
+
+def is_duration_label(text: str) -> bool:
+    """True for thumbnail-overlay text like '08:00 720p' or 'HD 3m', not a real title.
+
+    Some sites wrap one video in two anchors: a thumbnail whose only visible
+    text is its duration/quality overlay, and a separate link carrying the
+    actual title. Whichever anchor is encountered first would otherwise win
+    the URL-keyed dedup below and permanently hide the real title.
+    """
+    return bool(DURATION_LABEL_PATTERN.match(text.strip()))
+
+
+def is_video_candidate(adapter: SiteAdapter, path: str) -> bool:
+    """Reject known listing/profile URLs that resemble video links."""
+    if adapter.name == "XHamster" and re.search(r"/(?:creators|users|channels)/", path):
+        return False
+    return re.search(adapter.video_pattern, path) is not None
 
 
 def parse_int(value: str | None) -> int | None:
@@ -163,49 +279,101 @@ def parse_int(value: str | None) -> int | None:
     return int(number * multiplier.get(match.group(2), 1))
 
 
-def search_adapter(adapter: SiteAdapter, query: str) -> list[SearchCandidate]:
-    """Fetch and cheaply filter one site's search page."""
+def search_adapter(
+    adapter: SiteAdapter, query: str, start_delay: float = 0.0
+) -> list[SearchCandidate]:
+    """Fetch and cheaply filter one site's search page.
+
+    ``start_delay`` staggers this worker's first request (see
+    SEARCH_STAGGER_SECONDS). It is applied after the cache lookup so a cache
+    hit still returns immediately.
+    """
     if adapter.search_url is None:
         print(f"[{adapter.name}] search unavailable: {adapter.disabled_reason}")
         return []
+    init_cache()
+    cache_key = f"{adapter.name}:{query.casefold()}"
+    cached = load_cached_candidates(cache_key)
+    if cached is not None:
+        return cached
+    if start_delay > 0:
+        time.sleep(start_delay)
     last_error: Exception | None = None
-    response = None
+    html: str | None = None
     search_url = ""
     try:
-        with requests.Session() as session:
+        with http_client.new_session(impersonate=adapter.impersonate) as session:
             for search_url in adapter.make_search_urls(query):
                 try:
-                    response = session.get(
+                    # stream=True so a retryable status is seen from the headers
+                    # and retried without ever pulling a body down, and so the
+                    # body that is wanted arrives in bounded chunks.
+                    response = http_client.get(
+                        session,
                         search_url,
-                        headers={"User-Agent": USER_AGENT},
+                        headers=http_client.request_headers(),
                         timeout=REQUEST_TIMEOUT,
+                        stream=True,
                     )
-                    response.raise_for_status()
+                    if not response.ok:
+                        # Close before raising: the streamed error body would
+                        # otherwise sit unread on the socket until session exit.
+                        response.close()
+                        response.raise_for_status()
+                    html = http_client.read_text(response)
                     break
-                except requests.RequestException as error:
+                except http_client.HTTP_EXCEPTIONS as error:
                     last_error = error
-                    response = None
-    except requests.RequestException as error:
+                    html = None
+    except http_client.HTTP_EXCEPTIONS as error:
         last_error = error
-    if response is None:
+    if html is None:
         print(f"[{adapter.name}] search failed: {last_error}")
         return []
 
-    soup = BeautifulSoup(response.text, "html.parser")
-    candidates: list[SearchCandidate] = []
-    seen_urls: set[str] = set()
-    for anchor in soup.find_all("a", href=True):
+    soup = BeautifulSoup(html, "html.parser")
+    scope = soup
+    if adapter.result_container_id:
+        scope = soup.find(id=adapter.result_container_id) or soup
+    candidates_by_key: dict[str, SearchCandidate] = {}
+    for anchor in scope.find_all("a", href=True):
         href = urljoin(search_url, anchor["href"])
         path = urlparse(href).path
         title = anchor.get("title") or anchor.get_text(" ", strip=True)
-        if (
-            re.search(adapter.video_pattern, path)
-            and href not in seen_urls
-            and title
-        ):
-            seen_urls.add(href)
-            candidates.append(SearchCandidate(adapter.name, title, href))
-    return candidates[:MAX_CANDIDATES_PER_SITE]
+        if not (is_video_candidate(adapter, path) and title):
+            continue
+        candidate_key = canonical_url(href)
+        existing = candidates_by_key.get(candidate_key)
+        if existing is None or (is_duration_label(existing.title) and not is_duration_label(title)):
+            candidates_by_key[candidate_key] = SearchCandidate(adapter.name, title, href)
+    candidates = list(candidates_by_key.values())[:MAX_CANDIDATES_PER_SITE]
+    cache_candidates(cache_key, candidates)
+    return candidates
+
+
+def search_lustpress(query: str) -> list[SearchCandidate]:
+    """Search configured Lustpress sources and adapt them to our pipeline."""
+    if not lustpress_is_configured():
+        return []
+    init_cache()
+    candidates: list[SearchCandidate] = []
+    for site in ("xvideos", "xhamster", "youporn"):
+        cache_key = f"Lustpress/{site}:{query.casefold()}"
+        cached = load_cached_candidates(cache_key)
+        if cached is not None:
+            candidates.extend(cached)
+            continue
+        try:
+            site_candidates = [
+                SearchCandidate(item.site, item.title, item.url)
+                for item in lustpress_search_site(site, query)
+            ]
+        except (requests.RequestException, ValueError) as error:
+            print(f"[Lustpress/{site}] search failed: {error}")
+            continue
+        cache_candidates(cache_key, site_candidates)
+        candidates.extend(site_candidates)
+    return candidates[: MAX_CANDIDATES_PER_SITE * 3]
 
 
 def text_passes_filters(
@@ -228,6 +396,15 @@ def init_cache() -> None:
             """
             CREATE TABLE IF NOT EXISTS inspected_videos (
                 url TEXT PRIMARY KEY,
+                checked_at REAL NOT NULL,
+                payload TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS search_pages (
+                cache_key TEXT PRIMARY KEY,
                 checked_at REAL NOT NULL,
                 payload TEXT NOT NULL
             )
@@ -275,6 +452,39 @@ def cache_result(result: VideoResult, cache_key: str | None = None) -> None:
         )
 
 
+def load_cached_candidates(cache_key: str) -> list[SearchCandidate] | None:
+    """Return a still-fresh cached search-page result list, or None on a miss."""
+    cutoff = time.time() - SEARCH_PAGE_CACHE_TTL_SECONDS
+    with sqlite3.connect(SEARCH_CACHE, timeout=30) as connection:
+        row = connection.execute(
+            "SELECT checked_at, payload FROM search_pages WHERE cache_key = ?",
+            (cache_key,),
+        ).fetchone()
+    if not row or row[0] < cutoff:
+        return None
+    return [SearchCandidate(**item) for item in json.loads(row[1])]
+
+
+def cache_candidates(cache_key: str, candidates: list[SearchCandidate]) -> None:
+    with sqlite3.connect(SEARCH_CACHE, timeout=30) as connection:
+        connection.execute(
+            """
+            INSERT INTO search_pages(cache_key, checked_at, payload)
+            VALUES (?, ?, ?)
+            ON CONFLICT(cache_key) DO UPDATE SET
+                checked_at = excluded.checked_at,
+                payload = excluded.payload
+            """,
+            (
+                cache_key,
+                time.time(),
+                json.dumps(
+                    [{"site": item.site, "title": item.title, "url": item.url} for item in candidates]
+                ),
+            ),
+        )
+
+
 def inspect_candidate(candidate: SearchCandidate) -> VideoResult | None:
     cached = load_cached_result(candidate.url)
     if cached:
@@ -290,7 +500,7 @@ def inspect_candidate(candidate: SearchCandidate) -> VideoResult | None:
             print(f"[PMVHaven] API metadata unavailable: {error}")
 
     try:
-        with yt_dlp.YoutubeDL(ydl_options()) as ydl:
+        with yt_dlp.YoutubeDL(ydl_options(impersonate_for_url(candidate.url))) as ydl:
             info = ydl.extract_info(candidate.url, download=False)
     except yt_dlp.utils.DownloadError as error:
         if pmv_metadata:
@@ -350,13 +560,39 @@ def filter_rejection_reason(
     return None
 
 
-def deduplicate(results: list[VideoResult]) -> list[VideoResult]:
+def relevance_score(title: str, query: str) -> tuple[float, float, float]:
+    """How well a title matches the search query, most-significant term first.
+
+    Priority order: an exact substring match beats any partial match; among
+    partial matches, covering more of the query's words beats fewer; ties
+    break on overall text closeness. This is what "most accurate title
+    first" means here — matching the query text, not the file's resolution.
+    """
+    norm_title = normalize_title(title)
+    norm_query = normalize_title(query)
+    if not norm_query:
+        return (0.0, 0.0, 0.0)
+    exact = 1.0 if norm_query in norm_title else 0.0
+    query_words = norm_query.split()
+    title_words = set(norm_title.split())
+    coverage = sum(1 for word in query_words if word in title_words) / len(query_words)
+    closeness = difflib.SequenceMatcher(None, norm_query, norm_title).ratio()
+    return (exact, coverage, closeness)
+
+
+def deduplicate(results: list[VideoResult], query: str = "") -> list[VideoResult]:
     best: dict[str, VideoResult] = {}
     for result in results:
         key = normalize_title(result.title)
         if not key or key not in best or result.quality_score > best[key].quality_score:
             best[key] = result
-    return sorted(best.values(), key=lambda item: (-item.max_height, item.title.casefold()))
+    if not query:
+        return sorted(best.values(), key=lambda item: (-item.max_height, item.title.casefold()))
+    return sorted(
+        best.values(),
+        key=lambda item: (*relevance_score(item.title, query), item.max_height, item.max_tbr),
+        reverse=True,
+    )
 
 
 def search(
@@ -367,12 +603,21 @@ def search(
 ) -> list[VideoResult]:
     init_cache()
     candidates: list[SearchCandidate] = []
+    if lustpress_is_configured():
+        candidates.extend(
+            candidate
+            for candidate in search_lustpress(query)
+            if text_passes_filters(candidate.title, candidate.url, filters, excludes)
+        )
     with ThreadPoolExecutor(max_workers=min(SEARCH_WORKERS, len(ADAPTERS))) as pool:
-        searches = [pool.submit(search_adapter, adapter, query) for adapter in ADAPTERS]
+        searches = [
+            pool.submit(search_adapter, adapter, query, index * SEARCH_STAGGER_SECONDS)
+            for index, adapter in enumerate(ADAPTERS)
+        ]
         for future in as_completed(searches):
             try:
                 found_candidates = future.result()
-            except Exception as error:  # noqa: BLE001 - isolate one failed worker
+            except WORKER_EXCEPTIONS as error:
                 print(f"Search worker failed: {error}")
                 continue
             for candidate in found_candidates:
@@ -381,7 +626,7 @@ def search(
 
     unique_candidates: dict[str, SearchCandidate] = {}
     for candidate in candidates:
-        unique_candidates.setdefault(candidate.url, candidate)
+        unique_candidates.setdefault(canonical_url(candidate.url), candidate)
 
     print(f"Found {len(unique_candidates)} candidate links before yt-dlp inspection.")
 
@@ -395,10 +640,11 @@ def search(
         }
         for index, future in enumerate(as_completed(inspections), 1):
             candidate = inspections[future]
-            print(f"Inspected {index}/{len(inspections)}: {candidate.title}")
+            if index == 1 or index % 10 == 0 or index == len(inspections):
+                print(f"Inspected {index}/{len(inspections)} candidates...")
             try:
                 result = future.result()
-            except Exception as error:  # noqa: BLE001 - isolate one failed worker
+            except WORKER_EXCEPTIONS as error:
                 print(f"[{candidate.site}] inspection failed: {error}")
                 extraction_failures += 1
                 continue
@@ -433,7 +679,7 @@ def search(
         print(f"  Include filters: {filters or '(none)'}")
         print(f"  Exclusions: {excludes or '(none)'}")
         print(f"  Minimum views: {min_views}")
-    return deduplicate(results)
+    return deduplicate(results, query)
 
 
 def inspect_direct_url(url: str) -> VideoResult | None:
@@ -457,12 +703,14 @@ def print_results(results: list[VideoResult]) -> None:
     if not results:
         print("No matching videos found.")
         return
+    print(f"\n{BOLD}Search results ({len(results)} unique):{RESET}")
     for index, result in enumerate(results, 1):
         views = "unknown" if result.view_count is None else f"{result.view_count:,}"
         quality = f"{result.max_height}p" if result.max_height else "unknown quality"
-        print(f"\n{index}. {result.title}")
-        print(f"   Site: {result.site} | Views: {views} | Best: {quality}")
-        print(f"   URL: {result.url}")
+        print(f"\n{GREEN}[{index}]{RESET} {result.title}")
+        print(f"    Site: {result.site} | Views: {views} | Best: {quality}")
+        print(f"    Preview: {CYAN}{result.url}{RESET}")
+    print(f"\n{DIM}Use Download and enter a result number to download a result.{RESET}")
 
 
 def print_menu(filters: list[str], excludes: list[str], min_views: int) -> None:
@@ -501,7 +749,7 @@ def download_selected(results: list[VideoResult]) -> None:
     print(f"Downloading: {result.title}")
     try:
         cancellation = DownloadCancellation()
-        options = ydl_options()
+        options = ydl_options(impersonate_for_url(result.url))
         options["progress_hooks"] = [cancellation.progress_hook]
         cancellation.start()
         try:

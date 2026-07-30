@@ -24,6 +24,30 @@ python -m private_search.downloader
 FFmpeg is required when yt-dlp must merge separate audio and video streams.
 On macOS: `brew install ffmpeg`.
 
+### Optional Lustpress search backend
+
+You can run a self-hosted [Lustpress](https://github.com/sinkaroid/lustpress)
+instance and set its REST URL before starting the search CLI:
+
+```bash
+export LUSTPRESS_BASE_URL=http://localhost:3000
+./.venv/bin/python private.py
+```
+
+Lustpress currently improves search for XHamster, XVideos, and YouPorn. Its
+results enter the same filtering, deduplication, cache, and yt-dlp inspection
+pipeline. It does not replace the downloader, and it has no effect on the
+built-in SpankBang, TNAFlix, or YouJizz adapters, or on the separate PMVHaven
+metadata adapter, all of which keep using their own scrapers.
+
+## Known limitations
+
+XVideos' own search backend intermittently returns HTTP 500 for specific
+query terms (confirmed independent of headers, TLS fingerprint, or URL
+variant — including their AMP mirror), rather than failing to reach it.
+When this happens the XVideos adapter is skipped for that search; other
+configured sites are unaffected.
+
 ## Project layout
 
 ```text
