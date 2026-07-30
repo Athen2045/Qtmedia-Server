@@ -1,3 +1,6 @@
+import sys
+
+import pytest
 from typer.testing import CliRunner
 
 from private_search import cli
@@ -103,3 +106,32 @@ def test_search_command_direct_url_inspects_instead_of_searching(monkeypatch):
     assert calls == ["https://example.test/direct"]
     assert "Direct hit" in result.stdout
     assert downloaded == [inspected.url]
+
+
+def test_run_search_alias_forwards_argv_to_search_command(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["private-search", "some title", "--min-views", "5"])
+    calls = []
+
+    def fake_search(query, filters, excludes, min_views):
+        calls.append((query, filters, excludes, min_views))
+        return []
+
+    monkeypatch.setattr(cli.search, "search", fake_search)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.run_search_alias()
+
+    assert exc_info.value.code in (0, None)
+    assert calls == [("some title", [], list(cli.search.DEFAULT_EXCLUDES), 5)]
+
+
+def test_run_download_alias_forwards_argv_to_download_command(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["private-download", "https://example.test/video"])
+    calls = []
+    monkeypatch.setattr(cli.downloader, "download_video", lambda url, progress=None: calls.append(url))
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.run_download_alias()
+
+    assert exc_info.value.code in (0, None)
+    assert calls == ["https://example.test/video"]

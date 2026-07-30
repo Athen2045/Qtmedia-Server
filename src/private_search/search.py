@@ -24,7 +24,6 @@ from bs4 import BeautifulSoup
 
 from . import http_client
 from .config import DOWNLOAD_ROOT, SEARCH_CACHE, ensure_runtime_directories
-from .download_control import DownloadCancellation, DownloadCancelled
 from .lustpress import is_configured as lustpress_is_configured
 from .lustpress import search_site as lustpress_search_site
 from .pmvhaven import fetch_metadata, is_pmvhaven_url
@@ -58,15 +57,6 @@ WORKER_EXCEPTIONS = (
     TypeError,
     OSError,
 )
-
-
-# ANSI colors are supported by macOS Terminal and most modern terminals.
-RESET = "\033[0m"
-BOLD = "\033[1m"
-CYAN = "\033[36m"
-GREEN = "\033[32m"
-YELLOW = "\033[33m"
-DIM = "\033[2m"
 
 
 @dataclass(frozen=True)
@@ -699,148 +689,12 @@ def inspect_direct_url(url: str) -> VideoResult | None:
     return result
 
 
-def print_results(results: list[VideoResult]) -> None:
-    if not results:
-        print("No matching videos found.")
-        return
-    print(f"\n{BOLD}Search results ({len(results)} unique):{RESET}")
-    for index, result in enumerate(results, 1):
-        views = "unknown" if result.view_count is None else f"{result.view_count:,}"
-        quality = f"{result.max_height}p" if result.max_height else "unknown quality"
-        print(f"\n{GREEN}[{index}]{RESET} {result.title}")
-        print(f"    Site: {result.site} | Views: {views} | Best: {quality}")
-        print(f"    Preview: {CYAN}{result.url}{RESET}")
-    print(f"\n{DIM}Use Download and enter a result number to download a result.{RESET}")
-
-
-def print_menu(filters: list[str], excludes: list[str], min_views: int) -> None:
-    """Render the application dashboard and menu using plain ASCII borders."""
-    width = 72
-    filter_text = ", ".join(filters) if filters else "(none)"
-    print()
-    print(f"{CYAN}+{'=' * width}+{RESET}")
-    print(f"{CYAN}|{RESET}{BOLD}                         PRIVATE SEARCH                         {RESET}{CYAN}|{RESET}")
-    print(f"{CYAN}+{'-' * width}+{RESET}")
-    print(f"{CYAN}|{RESET} Applied parameters:                                                {CYAN}|{RESET}")
-    print(f"{CYAN}|{RESET}   Include filters : {YELLOW}{filter_text[:52]:<52}{RESET} {CYAN}|{RESET}")
-    print(f"{CYAN}|{RESET}   Minimum views   : {YELLOW}{min_views!s:<52}{RESET} {CYAN}|{RESET}")
-    print(f"{CYAN}+{'-' * width}+{RESET}")
-    print(f"{CYAN}|{RESET} {GREEN}1{RESET} Search titles       {GREEN}2{RESET} Include filters     {GREEN}3{RESET} Show last results   {CYAN}|{RESET}")
-    print(f"{CYAN}|{RESET} {GREEN}4{RESET} Inspect direct URL  {GREEN}5{RESET} Download             {GREEN}6{RESET} Quit                 {CYAN}|{RESET}")
-    print(f"{CYAN}+{'=' * width}+{RESET}")
-
-
-def download_selected(results: list[VideoResult]) -> None:
-    if not results:
-        print("Search first, then choose a result to download.")
-        return
-    choice = input("Enter result number to download (or blank to cancel): ").strip()
-    if not choice:
-        return
-    try:
-        result = results[int(choice) - 1]
-    except (ValueError, IndexError):
-        print("Invalid result number.")
-        return
-
-    import yt_dlp
-
-    OUTPUT_FOLDER.mkdir(exist_ok=True)
-    print(f"Downloading: {result.title}")
-    try:
-        cancellation = DownloadCancellation()
-        options = ydl_options(impersonate_for_url(result.url))
-        options["progress_hooks"] = [cancellation.progress_hook]
-        cancellation.start()
-        try:
-            with yt_dlp.YoutubeDL(options) as ydl:
-                ydl.download([result.url])
-        finally:
-            cancellation.stop()
-    except DownloadCancelled:
-        print("Download cancelled by user.")
-    except yt_dlp.utils.DownloadError as error:
-        print(f"Download failed: {error}")
-
-
-def filter_menu(filters: list[str], min_views: int) -> int:
-    while True:
-        print(f"\nFilters: {filters or '[none]'} | Minimum views: {min_views}")
-        print("1) Add filter  2) Remove filter  3) Set minimum views  4) Back")
-        choice = input("> ").strip()
-        if choice == "1":
-            term = input("Add filter term: ").strip()
-            if term and term.casefold() not in {item.casefold() for item in filters}:
-                filters.append(term)
-        elif choice == "2":
-            term = input("Remove filter term: ").strip().casefold()
-            filters[:] = [item for item in filters if item.casefold() != term]
-        elif choice == "3":
-            try:
-                min_views = max(0, int(input("Minimum views: ").strip()))
-            except ValueError:
-                print("Enter a whole number.")
-        elif choice == "4":
-            return min_views
-        else:
-            print("Choose 1, 2, 3, or 4.")
-
-
-def exclude_menu(excludes: list[str]) -> None:
-    while True:
-        print(f"\nExcluded terms: {excludes or '[none]'}")
-        print("1) Add excluded term  2) Remove excluded term  3) Back")
-        choice = input("> ").strip()
-        if choice == "1":
-            term = input("Exclude term/tag: ").strip()
-            if term and term.casefold() not in {item.casefold() for item in excludes}:
-                excludes.append(term)
-        elif choice == "2":
-            term = input("Remove excluded term: ").strip().casefold()
-            excludes[:] = [item for item in excludes if item.casefold() != term]
-        elif choice == "3":
-            return
-        else:
-            print("Choose 1, 2, or 3.")
-
-
-def run() -> None:
-    filters = DEFAULT_FILTERS.copy()
-    excludes = DEFAULT_EXCLUDES.copy()
-    min_views = MIN_VIEWS
-    results: list[VideoResult] = []
-
-    while True:
-        print_menu(filters, excludes, min_views)
-        choice = input("> ").strip()
-        if choice == "1":
-            query = input("Search title: ").strip()
-            if query:
-                results = search(query, filters, excludes, min_views)
-                print_results(results)
-        elif choice == "2":
-            min_views = filter_menu(filters, min_views)
-        elif choice == "3":
-            print_results(results)
-        elif choice == "4":
-            url = input("Video URL: ").strip()
-            if url:
-                direct_result = inspect_direct_url(url)
-                if direct_result:
-                    results = [direct_result]
-        elif choice == "5":
-            download_selected(results)
-        elif choice == "6":
-            print("Goodbye.")
-            return
-        else:
-            print("Choose 1, 2, 3, 4, 5, or 6.")
-
-
 def main() -> None:
     signal.signal(signal.SIGINT, signal.default_int_handler)
     try:
-        run()
+        from .cli import run_search_alias
+
+        run_search_alias()
     except (KeyboardInterrupt, EOFError):
         print("\nStopped by user.")
 

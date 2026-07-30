@@ -20,8 +20,9 @@ dependencies = [
 dev = ["pylint>=3.0", "pytest>=8.0", "ruff>=0.6"]
 
 [project.scripts]
-private-search = "private_search.search:main"
-private-download = "private_search.downloader:main"
+qt = "private_search.cli:app"
+private-search = "private_search.cli:run_search_alias"
+private-download = "private_search.cli:run_download_alias"
 
 [tool.setuptools.packages.find]
 where = ["src"]

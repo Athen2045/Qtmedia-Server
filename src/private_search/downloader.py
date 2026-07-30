@@ -124,27 +124,13 @@ def download_video(video_url, progress=None):
         print(f"Error downloading {video_url}: {error}")
 
 
-def main():
-    print("Paste a direct video URL to download it as MP4.")
-    print("Type 'q' or 'quit' to exit.")
+def main() -> None:
+    try:
+        from .cli import run_download_alias
 
-    while True:
-        try:
-            video_url = input("Enter Link: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\nExiting.")
-            return
-
-        if video_url.casefold() in {"q", "quit", "exit"}:
-            print("Exiting.")
-            return
-        if not video_url:
-            print("Please enter a URL.")
-            continue
-        if not is_direct_video_url(video_url):
-            print("Please enter a direct video URL, not a homepage or placeholder URL.")
-            continue
-        download_video(video_url)
+        run_download_alias()
+    except (KeyboardInterrupt, EOFError):
+        print("\nStopped by user.")
 
 
 if __name__ == "__main__":
