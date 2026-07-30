@@ -5,9 +5,9 @@ from urllib.parse import urlparse
 
 import requests
 
+from . import http_client
 from .config import DOWNLOAD_ROOT, ensure_runtime_directories
 from .download_control import DownloadCancellation, DownloadCancelled
-from . import http_client
 from .pmvhaven import fetch_metadata, is_pmvhaven_url
 from .search import adapter_for_host, impersonate_for_url, is_video_candidate
 

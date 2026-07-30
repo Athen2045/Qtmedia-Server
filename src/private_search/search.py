@@ -1,6 +1,6 @@
 """Interactive multi-site video search and download CLI.
 
-This is an experimental companion to main.py. It searches result pages with
+This is the search companion to download.py. It searches result pages with
 site adapters, then lets yt-dlp inspect and download only direct video URLs.
 """
 

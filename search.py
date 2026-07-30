@@ -1,4 +1,4 @@
-"""Compatibility launcher for the Private Search CLI.
+"""Launch the search CLI from a source checkout.
 
 The implementation lives in ``src/private_search/search.py``.
 """

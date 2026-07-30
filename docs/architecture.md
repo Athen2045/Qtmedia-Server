@@ -4,7 +4,7 @@ The repository has two user-facing interfaces and a small shared runtime
 configuration module.
 
 ```text
-root launchers (main.py, private.py)
+root launchers (search.py, download.py)
         |
         v
 src/private_search/

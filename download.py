@@ -1,4 +1,4 @@
-"""Compatibility launcher for the direct-link downloader.
+"""Launch the direct-link downloader from a source checkout.
 
 The implementation lives in ``src/private_search/downloader.py``.
 """

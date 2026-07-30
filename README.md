@@ -1,62 +1,123 @@
-# Private Search
+# Qt-Downloader
 
-Private Search is a local terminal application for searching configured video
-sites, inspecting candidate URLs with [yt-dlp](https://github.com/yt-dlp/yt-dlp),
-deduplicating results by title and quality, and downloading selected videos.
+Qt-Downloader is a local graphical application for searching configured video
+sites, inspecting candidate links with [yt-dlp](https://github.com/yt-dlp/yt-dlp),
+deduplicating results by title and available quality, and downloading a selected
+video. Runtime data stays on the local machine.
 
-## Run
+## Features
 
-Create or activate the project virtual environment, then run either command:
+- Concurrent searches across the configured site adapters.
+- Include filtering and default exclusion of `ai`, `ai-generated`, and `vr`.
+- URL and title deduplication before and after yt-dlp inspection.
+- Persistent SQLite inspection cache to avoid reprocessing known URLs.
+- Progressive result display and interactive download selection.
+- `q` cancellation during an active download.
+- Optional integration with a self-hosted [Lustpress](https://github.com/sinkaroid/lustpress) instance.
+
+## Requirements
+
+- Python 3.11 or newer.
+- FFmpeg, including `ffprobe`, available on `PATH` for reliable media
+  inspection and stream merging.
+- Network access to the sites and services you choose to query.
+
+On macOS, install FFmpeg with Homebrew:
 
 ```bash
-./.venv/bin/python private.py       # search interface
-./.venv/bin/python main.py          # direct-link downloader
+brew install ffmpeg
 ```
 
-The package entry point is also available after an editable install:
+## Installation
+
+From the repository root:
 
 ```bash
-python -m pip install -e .
-python -m private_search
-python -m private_search.downloader
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
 ```
 
-FFmpeg is required when yt-dlp must merge separate audio and video streams.
-On macOS: `brew install ffmpeg`.
+## Usage
 
-### Optional Lustpress search backend
+Start the search interface:
 
-You can run a self-hosted [Lustpress](https://github.com/sinkaroid/lustpress)
-instance and set its REST URL before starting the search CLI:
+```bash
+python search.py
+```
+
+Start the direct-link downloader:
+
+```bash
+python download.py
+```
+
+The installed console commands are also available:
+
+```bash
+private-search
+private-download
+```
+
+The search interface prompts for a title, applies the configured filters, and
+shows matching preview links. The downloader prompts for a URL and saves the
+result under `var/downloads/`. Enter `q` and press Return when prompted during a
+download to request cancellation; press `Ctrl+C` to interrupt the application.
+
+## Optional Lustpress integration
+
+Point the search interface at a local Lustpress REST service before starting it:
 
 ```bash
 export LUSTPRESS_BASE_URL=http://localhost:3000
-./.venv/bin/python private.py
+python search.py
 ```
 
-Lustpress currently improves search for XHamster, XVideos, and YouPorn. Its
-results enter the same filtering, deduplication, cache, and yt-dlp inspection
-pipeline. It does not replace the downloader, and it has no effect on the
-built-in SpankBang, TNAFlix, or YouJizz adapters, or on the separate PMVHaven
-metadata adapter, all of which keep using their own scrapers.
+Lustpress can supplement the built-in adapters for supported sites. It does not
+replace yt-dlp or the direct-link downloader. The service must be configured and
+running separately.
 
-## Known limitations
+## Runtime data and configuration
 
-XVideos' own search backend intermittently returns HTTP 500 for specific
-query terms (confirmed independent of headers, TLS fingerprint, or URL
-variant — including their AMP mirror), rather than failing to reach it.
-When this happens the XVideos adapter is skipped for that search; other
-configured sites are unaffected.
+- `var/cache/search.sqlite3` stores inspection results.
+- `var/downloads/` stores downloaded media.
+- `.env.example` documents optional environment settings.
 
-## Project layout
+These paths are ignored by Git. Do not commit downloaded media, cookies,
+credentials, or cache databases.
 
-```text
-src/private_search/   Application modules
-tests/                Automated tests
-scripts/              Developer helpers
-var/downloads/        Downloaded media (ignored by Git)
-var/cache/            SQLite inspection cache (ignored by Git)
+## Development
+
+Run the local quality checks before submitting a change:
+
+```bash
+ruff check .
+pytest -q
+python -m compileall -q src tests search.py download.py
 ```
 
-Runtime data is deliberately outside the source package. Do not commit media,
-cookies, credentials, or cache databases to a repository.
+The same checks run in GitHub Actions on Python 3.12, 3.13, and 3.14 for pushes
+and pull requests targeting `main`. See
+[`docs/architecture.md`](docs/architecture.md) for the component overview and
+[`docs/spec-process-cicd-ci.md`](docs/spec-process-cicd-ci.md) for the CI
+workflow specification.
+
+## Troubleshooting
+
+**yt-dlp reports missing FFmpeg or `ffprobe`.** Install FFmpeg and verify that
+`ffmpeg -version` and `ffprobe -version` work in the same shell used to run the
+application.
+
+**A site returns HTTP 403, 404, or a bot challenge.** Site layouts and access
+controls change independently of this project. The adapter reports the failure
+and the remaining configured sources continue when possible.
+
+**Lustpress results are unavailable.** Confirm `LUSTPRESS_BASE_URL` is correct
+and that the service is reachable before starting the search interface.
+
+## Responsible use
+
+Use this software only where you have the legal right and permission to access
+and download the content. Respect applicable law, site terms, copyright, age
+requirements, rate limits, and creator rights.
