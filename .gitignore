@@ -13,6 +13,9 @@ var/cache/
 *.sqlite3
 *.db
 
+# Superpowers subagent-driven-development workspaces
+.superpowers/
+
 # macOS and editor files
 .DS_Store
 .idea/
