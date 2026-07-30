@@ -66,7 +66,7 @@ def build_ydl_options(video_url=None):
     return options
 
 
-def download_video(video_url):
+def download_video(video_url, progress=None):
     if not is_direct_video_url(video_url):
         print(f"Skipping non-video URL: {video_url}")
         return
@@ -104,6 +104,10 @@ def download_video(video_url):
             )
         cancellation = DownloadCancellation()
         options["progress_hooks"] = [cancellation.progress_hook]
+        if progress is not None:
+            options["progress_hooks"].append(progress)
+            options["quiet"] = True
+            options["no_warnings"] = True
         cancellation.start()
         try:
             with yt_dlp.YoutubeDL(options) as ydl:
