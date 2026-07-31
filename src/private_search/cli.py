@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from typing import Optional
+from typing import Annotated
 
 import typer
 from rich.console import Console
@@ -23,13 +23,6 @@ from . import downloader, search
 
 app = typer.Typer(name="qt", help="Search and download videos from configured sites.")
 console = Console()
-
-
-@app.callback()
-def main() -> None:
-    """Search and download videos from configured sites."""
-    # Present so Typer always dispatches subcommands (``search``/``download``)
-    # instead of collapsing to single-command mode when only one is registered.
 
 
 def _run_download(url: str) -> None:
@@ -58,7 +51,7 @@ def _run_download(url: str) -> None:
 
 @app.command("download")
 def download_cmd(
-    url: str = typer.Argument(..., help="Direct video URL to download."),
+    url: Annotated[str, typer.Argument(help="Direct video URL to download.")],
 ) -> None:
     """Download a direct video URL with yt-dlp."""
     _run_download(url)
@@ -90,8 +83,11 @@ def _prompt_and_download(results: list[search.VideoResult]) -> None:
     if not choice:
         return
     try:
-        chosen = results[int(choice) - 1]
-    except (ValueError, IndexError):
+        number = int(choice)
+        if not 1 <= number <= len(results):
+            raise ValueError(number)
+        chosen = results[number - 1]
+    except ValueError:
         console.print("[red]Invalid result number.[/red]")
         return
     _run_download(chosen.url)
@@ -99,22 +95,28 @@ def _prompt_and_download(results: list[search.VideoResult]) -> None:
 
 @app.command("search")
 def search_cmd(
-    query: str = typer.Argument(..., help="Title or keywords to search for."),
-    filter_: list[str] = typer.Option(
-        [], "--filter", "-f", help="Only include results whose title/URL contains this term."
-    ),
-    exclude: list[str] = typer.Option(
-        list(search.DEFAULT_EXCLUDES),
-        "--exclude",
-        "-e",
-        help="Exclude results whose title/URL contains this term.",
-    ),
-    min_views: int = typer.Option(
-        search.MIN_VIEWS, "--min-views", help="Minimum view count to include."
-    ),
-    direct_url: Optional[str] = typer.Option(
-        None, "--direct-url", help="Inspect a single direct video URL instead of searching."
-    ),
+    query: Annotated[str, typer.Argument(help="Title or keywords to search for.")],
+    filter_: Annotated[
+        list[str],
+        typer.Option(
+            "--filter", "-f", help="Only include results whose title/URL contains this term."
+        ),
+    ] = (),
+    exclude: Annotated[
+        list[str],
+        typer.Option(
+            "--exclude",
+            "-e",
+            help="Exclude results whose title/URL contains this term.",
+        ),
+    ] = tuple(search.DEFAULT_EXCLUDES),
+    min_views: Annotated[
+        int, typer.Option("--min-views", help="Minimum view count to include.")
+    ] = search.MIN_VIEWS,
+    direct_url: Annotated[
+        str | None,
+        typer.Option("--direct-url", help="Inspect a single direct video URL instead of searching."),
+    ] = None,
 ) -> None:
     """Search configured sites for a title, or inspect one direct URL."""
     if direct_url:

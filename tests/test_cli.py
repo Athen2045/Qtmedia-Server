@@ -80,6 +80,17 @@ def test_search_command_invalid_number_does_not_crash(monkeypatch):
     assert downloaded == []
 
 
+def test_search_command_zero_is_invalid(monkeypatch):
+    monkeypatch.setattr(cli.search, "search", lambda *a, **k: [_make_result()])
+    downloaded = []
+    monkeypatch.setattr(cli, "_run_download", downloaded.append)
+
+    result = runner.invoke(cli.app, ["search", "some title"], input="0\n")
+
+    assert result.exit_code == 0
+    assert downloaded == []
+
+
 def test_search_command_direct_url_inspects_instead_of_searching(monkeypatch):
     inspected = _make_result(title="Direct hit")
     calls = []
