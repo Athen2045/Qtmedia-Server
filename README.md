@@ -41,29 +41,32 @@ python -m pip install -e ".[dev]"
 
 ## Usage
 
-Start the search interface:
+After installing (`python -m pip install -e ".[dev]"`), the `qt` command is
+available:
 
 ```bash
-python search.py
+qt search "video title" --filter hd --exclude vr --min-views 1000
+qt download https://example.com/video-page
 ```
 
-Start the direct-link downloader:
+`qt search` shows matching results in a table and then asks which result
+number to download (leave blank to skip). Pass `--direct-url <url>` to
+inspect a single URL with yt-dlp instead of searching. `qt download <url>`
+downloads a direct video URL immediately, showing a live progress bar.
+
+The root launcher scripts and the pre-existing console commands still work
+and forward into the same commands:
 
 ```bash
-python download.py
+python search.py "video title"
+python download.py https://example.com/video-page
+private-search "video title"
+private-download https://example.com/video-page
 ```
 
-The installed console commands are also available:
-
-```bash
-private-search
-private-download
-```
-
-The search interface prompts for a title, applies the configured filters, and
-shows matching preview links. The downloader prompts for a URL and saves the
-result under `var/downloads/`. Enter `q` and press Return when prompted during a
-download to request cancellation; press `Ctrl+C` to interrupt the application.
+Downloads are saved under `var/downloads/`. Enter `q` and press Return when
+prompted during a download to request cancellation; press `Ctrl+C` to
+interrupt the application.
 
 ## Optional Lustpress integration
 
