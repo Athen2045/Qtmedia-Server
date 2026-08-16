@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 from rich.console import Console
@@ -107,6 +108,31 @@ def test_select_project_image_retries_invalid_choice_and_allows_cancel(
 
     assert select_project_image(console) is None
     assert "Choose a number" in console.export_text()
+
+
+def test_select_project_image_cancels_on_empty_input(monkeypatch, tmp_path):
+    first = tmp_path / "image" / "a.jpg"
+    second = tmp_path / "image" / "b.jpg"
+    first.parent.mkdir(parents=True)
+    first.write_bytes(b"a")
+    second.write_bytes(b"b")
+    monkeypatch.setattr("private_search.app.chat_ui.config.PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr("private_search.app.chat_ui.Prompt.ask", lambda *args, **kwargs: "")
+    console = Console(record=True)
+
+    assert select_project_image(console) is None
+    assert "Selected image" not in console.export_text()
+
+
+def test_readme_documents_project_image_folder_and_not_legacy_commands():
+    readme = Path(__file__).resolve().parents[1] / "README.md"
+    content = readme.read_text(encoding="utf-8")
+
+    assert "/image PATH" not in content
+    assert "/clear-image" not in content
+    assert "active image path" not in content.casefold()
+    assert "project `image` folder" in content
+    assert "Kitty-optional previews" in content
 
 
 def test_execute_local_command_returns_false_for_quit():

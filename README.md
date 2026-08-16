@@ -75,11 +75,38 @@ PowerShell:
 .\main.bat
 ```
 
-This opens an interactive menu and uses the project virtual environment
-automatically; activation is not required. The menu provides search, direct
-download, metadata inspection, help, and quit. Inspection shows the title,
-site, view count, best quality, and canonical URL without downloading the
-video.
+This opens the Rich AI chatbot and uses the project virtual environment
+automatically; activation is not required. The chatbot starts the local
+llama.cpp server for the session and can route natural-language requests to
+the existing search and download tools. Its assistant identity is Theia: a
+sharp, concise, cheeky security-analyst guide with dry wit. She does not use
+flirtation, emojis, or filler. Use `/about` to see the active model and the
+application safeguards. Use these local commands:
+
+```text
+/about            Show Theia, model, and safeguards
+/help             Show chat commands
+/quit             Exit and stop the local model
+```
+
+After a search, the chatbot displays numbered results and asks
+`Download result [1-N]`. Enter or `q` skips downloading; selecting a number
+routes that result through the normal confirmation prompt.
+
+For reverse-image search, place candidate files anywhere under the project `image` folder.
+The chatbot scans that folder recursively when a reverse-image action needs a
+local file. With one supported file it auto-selects it; with
+multiple matches it shows a numbered Rich picker in discovery order. Theia
+keeps the confirmation step after selection because SmartImage uploads the file
+externally. Kitty-optional previews are shown during multi-image selection when
+the terminal supports them; text-only terminals keep the same picker without
+blocking the workflow.
+
+In the chatbot, include a source keyword when you want a specific search
+scope, for example `Search porn 'Bimbo PMV'` or `Search youtube 'L vs
+Epistein'`. The keyword is removed from the title query before the selected
+site adapters run. A search without a source keyword keeps the adult-source
+scope for compatibility with the existing downloader.
 
 `qt search` shows matching results in a table. Select a result to view its
 metadata and, when running inside Kitty, its thumbnail. Type `r` after the
@@ -141,6 +168,50 @@ running separately.
 - `var/cache/search.sqlite3` stores inspection results.
 - `var/downloads/` stores downloaded media.
 - `.env.example` documents optional environment settings.
+
+### Local AI runtime
+
+The project manages the downloaded llama.cpp server automatically through
+`private_search.ai.runtime`. By default it uses the Qwen GGUF model, vision
+projector, and the CUDA-enabled Windows `llama-server.exe` under `var/`. The
+runtime passes `--device CUDA0 --gpu-layers 999` when that build is installed,
+so the model and projector are offloaded to the first NVIDIA GPU. Override
+paths or limits with the `PRIVATE_SEARCH_LLM_*` variables in `.env.example`.
+The server binds to `127.0.0.1`, exposes a local health endpoint, and is
+stopped when the chat session exits. The local client and action validator reject non-loopback
+endpoints, malformed JSON, unknown actions, unsafe URLs, and missing
+action-specific fields. The existing search and download commands remain
+unchanged. Side-effecting actions pass through a Rich confirmation service and
+fixed Python adapters. SmartImage Rdx is invoked as a separate process in
+non-interactive delimited-output mode after confirmation; its results are
+rendered in a terminal table. Tookie username OSINT is wired through an
+isolated subprocess, writes its JSON report in a temporary directory, and is
+still confirmation-gated. The model-to-tool orchestrator keeps bounded history.
+
+### SmartImage Rdx reverse-image search
+
+The setup builds and publishes only `Update/SmartImage-4/SmartImage.Rdx`, not
+the SmartImage GUI. The default published executable is
+`var/smartimage-rdx/SmartImage.exe`. The launcher sets `NOVUS_DATA_FOLDER` to a
+temporary writable directory for each scan so SmartImage's cache does not
+depend on the user's global application-data permissions. Override the
+executable or timeout with `PRIVATE_SEARCH_SMARTIMAGE_RDX` and
+`PRIVATE_SEARCH_SMARTIMAGE_TIMEOUT`. If Windows application control blocks the
+self-contained executable, the adapter automatically falls back to the
+framework-dependent Rdx build in `var/smartimage-rdx-host/`, launched by the
+local .NET host. Override that fallback with `PRIVATE_SEARCH_SMARTIMAGE_DOTNET`
+and `PRIVATE_SEARCH_SMARTIMAGE_DLL`. Catbox is the default upload service;
+explicitly choose `Litterbox`, `Pomf`, or `TmpFiles` with
+`PRIVATE_SEARCH_SMARTIMAGE_UPLOAD_ENGINE` if your network permits that service.
+
+Reverse-image search uploads the selected local image to SmartImage's enabled
+search engines, so Theia asks for confirmation before it runs. Results are
+untrusted matches, not proof of identity, ownership, or authorship.
+
+Tookie uses `Update/tookie-osint/.venv` automatically when that environment
+exists. To use a different installation, set `PRIVATE_SEARCH_TOOKIE_ROOT` and
+`PRIVATE_SEARCH_TOOKIE_PYTHON`. Its scan timeout and worker count are controlled
+by `PRIVATE_SEARCH_TOOKIE_TIMEOUT` and `PRIVATE_SEARCH_TOOKIE_THREADS`.
 
 These paths are ignored by Git. Do not commit downloaded media, cookies,
 credentials, or cache databases.
