@@ -26,8 +26,7 @@ from ..ai.runtime import (
 )
 from ..ai.tools import ToolExecutionError, ToolRegistry, ToolUnavailableError
 from ..images import discover_images
-from ..osint.blackbird import BlackbirdAdapter
-from ..osint.smartimage import SmartImageAdapter
+from ..osint import BlackbirdAdapter, FaceAssistedReverseImageAdapter
 from ..search.preview import render_local_image
 
 
@@ -356,7 +355,7 @@ def interactive_chat() -> None:
             client,
             ToolRegistry(
                 confirmation,
-                reverse_image_tool=SmartImageAdapter(),
+                reverse_image_tool=FaceAssistedReverseImageAdapter(),
                 username_osint_tool=BlackbirdAdapter(),
                 email_osint_tool=BlackbirdAdapter(),
                 reverse_image_resolver=lambda: select_project_image(console),

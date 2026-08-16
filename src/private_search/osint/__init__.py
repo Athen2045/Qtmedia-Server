@@ -7,18 +7,17 @@ from .blackbird import (
 )
 from .insightface import InsightFaceAdapter, InsightFaceSettings
 from .smartimage import SmartImageAdapter, SmartImageExecutionError, SmartImageSettings
-from .tookie import TookieAdapter, TookieExecutionError, TookieSettings
+
+FaceAssistedReverseImageAdapter = InsightFaceAdapter
 
 __all__ = [
     "BlackbirdAdapter",
     "BlackbirdExecutionError",
     "BlackbirdSettings",
+    "FaceAssistedReverseImageAdapter",
     "InsightFaceAdapter",
     "InsightFaceSettings",
     "SmartImageAdapter",
     "SmartImageExecutionError",
     "SmartImageSettings",
-    "TookieAdapter",
-    "TookieExecutionError",
-    "TookieSettings",
 ]

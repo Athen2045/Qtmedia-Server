@@ -380,9 +380,9 @@ def test_interactive_chat_wires_blackbird_for_username_and_email(monkeypatch):
         def __init__(self):
             events.append(("blackbird_adapter", self))
 
-    class FakeSmartImageAdapter:
+    class FakeFaceAssistedReverseImageAdapter:
         def __init__(self):
-            events.append(("smartimage_adapter", self))
+            events.append(("face_assisted_adapter", self))
 
     class FakeToolRegistry:
         def __init__(self, confirmation, **kwargs):
@@ -395,7 +395,10 @@ def test_interactive_chat_wires_blackbird_for_username_and_email(monkeypatch):
     monkeypatch.setattr("private_search.app.chat_ui.RuntimeSettings.from_environment", lambda: object())
     monkeypatch.setattr("private_search.app.chat_ui.LlamaServer", FakeServer)
     monkeypatch.setattr("private_search.app.chat_ui.LlamaClient", lambda server_url: ("client", server_url))
-    monkeypatch.setattr("private_search.app.chat_ui.SmartImageAdapter", FakeSmartImageAdapter)
+    monkeypatch.setattr(
+        "private_search.app.chat_ui.FaceAssistedReverseImageAdapter",
+        FakeFaceAssistedReverseImageAdapter,
+    )
     monkeypatch.setattr("private_search.app.chat_ui.BlackbirdAdapter", FakeBlackbirdAdapter)
     monkeypatch.setattr("private_search.app.chat_ui.ToolRegistry", FakeToolRegistry)
     monkeypatch.setattr("private_search.app.chat_ui.ChatOrchestrator", FakeChatOrchestrator)
@@ -404,7 +407,7 @@ def test_interactive_chat_wires_blackbird_for_username_and_email(monkeypatch):
     interactive_chat()
 
     registry_kwargs = next(value for key, value in events if key == "tool_registry")
-    assert isinstance(registry_kwargs["reverse_image_tool"], FakeSmartImageAdapter)
+    assert isinstance(registry_kwargs["reverse_image_tool"], FakeFaceAssistedReverseImageAdapter)
     assert isinstance(registry_kwargs["username_osint_tool"], FakeBlackbirdAdapter)
     assert isinstance(registry_kwargs["email_osint_tool"], FakeBlackbirdAdapter)
     assert callable(registry_kwargs["reverse_image_resolver"])
