@@ -1,6 +1,6 @@
-"""Package entry point for the search CLI."""
+"""Package entry point for the interactive menu."""
 
-from .search import main
+from .app.cli import interactive_menu
 
 if __name__ == "__main__":
-    main()
+    interactive_menu()

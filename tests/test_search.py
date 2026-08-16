@@ -1,18 +1,30 @@
-from private_search import search as search_module
-from private_search.search import (
+import json
+import sqlite3
+import sys
+import time
+import types
+
+from private_search.search import engine as search_module
+from private_search.search.engine import (
     ADAPTERS,
     SearchCandidate,
+    SiteAdapter,
     VideoResult,
     adapter_for_host,
     canonical_url,
     deduplicate,
     filter_rejection_reason,
     impersonate_for_url,
+    inspect_candidate,
     is_duration_label,
     is_video_candidate,
     relevance_score,
     search_adapter,
+    thumbnail_url_from_info,
+    xvideos_view_count,
 )
+from private_search.search.quality import relevance_score as quality_relevance_score
+from private_search.search.quality import term_matches, tokenize
 
 
 class _FakeResponse:
@@ -81,6 +93,27 @@ def test_relevance_score_ranks_exact_match_above_partial_match():
     assert exact > partial > unrelated
 
 
+def test_term_matching_does_not_match_inside_words():
+    assert not term_matches("Maid Compilation", "ai")
+    assert term_matches("AI Generated Video", "ai")
+
+
+def test_quality_ranking_prefers_exact_phrase_over_substring_collision():
+    assert quality_relevance_score("cat blue dog", "cat dog") > quality_relevance_score(
+        "educat dog", "cat dog"
+    )
+
+
+def test_quality_ranking_handles_small_typos():
+    assert quality_relevance_score("Skylar Vox PMV", "Skyler Vox PMV") > quality_relevance_score(
+        "Completely unrelated title", "Skyler Vox PMV"
+    )
+
+
+def test_tokenization_preserves_unicode_letters():
+    assert tokenize("Beyoncé—Live") == ("beyoncé", "live")
+
+
 def test_deduplicate_with_query_ranks_the_closest_title_first_even_at_lower_quality():
     """"Most accurate title first" means matching the query text, not
     picking whichever result happens to have the highest resolution."""
@@ -142,6 +175,129 @@ def test_spankbang_scopes_extraction_to_the_results_container(tmp_path, monkeypa
     urls = [candidate.url for candidate in candidates]
     assert any("real-result" in url for url in urls)
     assert not any("nav-dropdown-item" in url for url in urls)
+
+
+def test_successful_empty_primary_page_tries_fallback(tmp_path, monkeypatch):
+    adapter = SiteAdapter(
+        "Test",
+        "https://primary.test/search/{query}",
+        r"/video/",
+        fallback_search_urls=("https://fallback.test/search/{query}",),
+    )
+    html_by_host = {
+        "primary.test": "<html><body>No results</body></html>",
+        "fallback.test": '<a href="/video/fallback">Fallback hit</a>',
+    }
+    monkeypatch.setattr(search_module, "SEARCH_CACHE", tmp_path / "cache.sqlite3")
+    monkeypatch.setattr(search_module.http_client, "new_session", lambda impersonate=None: _FakeSession(""))
+
+    def fake_get(_session, url, **kwargs):
+        host = url.split("/")[2]
+        return _FakeResponse(html_by_host[host])
+
+    monkeypatch.setattr(search_module.http_client, "get", fake_get)
+
+    candidates = search_adapter(adapter, "test query")
+
+    assert [candidate.title for candidate in candidates] == ["Fallback hit"]
+
+
+def test_candidate_cap_keeps_best_title_instead_of_dom_order(tmp_path, monkeypatch):
+    adapter = SiteAdapter("Test", "https://example.test/search/{query}", r"/video/")
+    weak_links = "".join(
+        f'<a href="/video/weak-{index}">Unrelated title {index}</a>'
+        for index in range(search_module.MAX_CANDIDATES_PER_SITE)
+    )
+    html = f'{weak_links}<a href="/video/exact">Exact query title</a>'
+    monkeypatch.setattr(search_module, "SEARCH_CACHE", tmp_path / "cache.sqlite3")
+    monkeypatch.setattr(search_module.http_client, "new_session", lambda impersonate=None: _FakeSession(html))
+    monkeypatch.setattr(search_module.http_client, "get", lambda session, url, **kwargs: session.get(url))
+
+    candidates = search_adapter(adapter, "exact query title")
+
+    assert any(candidate.title == "Exact query title" for candidate in candidates)
+
+
+def test_positive_minimum_views_rejects_unknown_counts():
+    result = VideoResult("title", "https://example.test/video", "Test", None, 720, 1)
+
+    assert not filter_rejection_reason(result, [], [], 100) is None
+
+
+def test_thumbnail_url_falls_back_to_yt_dlp_thumbnail_list():
+    info = {
+        "thumbnails": [
+            {"url": "https://cdn.example/low.jpg"},
+            {"url": "https://cdn.example/high.jpg"},
+        ]
+    }
+
+    assert thumbnail_url_from_info(info) == "https://cdn.example/high.jpg"
+
+
+def test_old_cache_record_without_thumbnail_is_reinspected(tmp_path, monkeypatch):
+    cache_path = tmp_path / "cache.sqlite3"
+    monkeypatch.setattr(search_module, "SEARCH_CACHE", cache_path)
+    search_module.init_cache()
+    url = "https://www.xvideos.com/video.example"
+    with sqlite3.connect(cache_path) as connection:
+        connection.execute(
+            "INSERT INTO inspected_videos(url, checked_at, payload) VALUES (?, ?, ?)",
+            (url, time.time(), json.dumps({"title": "Old", "url": url, "site": "XVideos", "view_count": None, "max_height": 388, "max_tbr": 1}),),
+        )
+
+    assert search_module.load_cached_result(url) is None
+
+
+def test_xvideos_view_count_fallback_parses_visible_count(monkeypatch):
+    session = _FakeSession(
+        '<div id="v-views"><strong class="mobile-hide">485,165</strong></div>'
+    )
+    monkeypatch.setattr(search_module.http_client, "new_session", lambda impersonate=None: session)
+    monkeypatch.setattr(
+        search_module.http_client,
+        "get",
+        lambda current_session, url, **kwargs: current_session.get(url),
+    )
+
+    assert xvideos_view_count("https://www.xvideos.com/video.example", "XVideos") == 485165
+
+
+def test_successful_yt_dlp_extraction_skips_pmvhaven_api(tmp_path, monkeypatch):
+    class FakeYDL:
+        def __init__(self, options):
+            self.options = options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def extract_info(self, url, download=False):
+            return {
+                "title": "Extracted title",
+                "webpage_url": url,
+                "thumbnail": "https://cdn.example/thumb.jpg",
+                "formats": [{"height": 720, "tbr": 100}],
+            }
+
+    monkeypatch.setattr(search_module, "SEARCH_CACHE", tmp_path / "cache.sqlite3")
+    monkeypatch.setattr(search_module, "is_pmvhaven_url", lambda url: True)
+    metadata_calls = []
+    monkeypatch.setattr(search_module, "fetch_metadata", lambda url: metadata_calls.append(url))
+    monkeypatch.setitem(
+        sys.modules,
+        "yt_dlp",
+        types.SimpleNamespace(YoutubeDL=FakeYDL, utils=types.SimpleNamespace(DownloadError=Exception)),
+    )
+    search_module.init_cache()
+
+    result = inspect_candidate(SearchCandidate("PMVHaven", "https://pmvhaven.test/video/1", "https://pmvhaven.test/video/1"))
+
+    assert result.title == "Extracted title"
+    assert result.thumbnail_url == "https://cdn.example/thumb.jpg"
+    assert metadata_calls == []
 
 
 def test_search_adapter_streams_the_body_and_closes_the_response(tmp_path, monkeypatch):

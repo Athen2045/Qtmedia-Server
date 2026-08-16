@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/allanmathewjohn/.claude/plugins/cache/claude-plugins-official/superpowers/6.2.0/skills/subagent-driven-development/**)",
+      "Bash(/Users/allanmathewjohn/.claude/plugins/cache/claude-plugins-official/superpowers/6.2.0/skills/subagent-driven-development/scripts/sdd-workspace docs/superpowers/plans/2026-07-31-typer-rich-cli.md)",
+      "Bash(git check-ignore *)",
+      "Bash(.venv/bin/pytest *)",
+      "Bash($SKILL_DIR/scripts/review-package *)",
+      "Bash(python -m pytest tests/test_downloader.py -v)",
+      "Bash(.venv/bin/python -m pytest tests/test_downloader.py -v)",
+      "Bash(.venv/bin/python -m pip install -e \".[dev]\")",
+      "Bash(.venv/bin/python *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(.venv/bin/qt search *)",
+      "Bash(.venv/bin/qt download *)"
+    ]
+  }
+}

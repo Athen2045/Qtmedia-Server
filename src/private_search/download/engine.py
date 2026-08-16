@@ -5,11 +5,12 @@ from urllib.parse import urlparse
 
 import requests
 
-from . import http_client
-from .config import DOWNLOAD_ROOT, ensure_runtime_directories
-from .download_control import DownloadCancellation, DownloadCancelled
-from .pmvhaven import fetch_metadata, is_pmvhaven_url
-from .search import adapter_for_host, impersonate_for_url, is_video_candidate
+from ..config import DOWNLOAD_ROOT, ensure_runtime_directories
+from ..net import http_client
+from ..search.engine import adapter_for_host, impersonate_for_url, is_video_candidate
+from ..sources.pmvhaven import fetch_metadata, is_pmvhaven_url
+from .control import DownloadCancellation, DownloadCancelled
+from .transfer import common_ydl_options
 
 # Optional proxy configuration, set via the PRIVATE_SEARCH_PROXY env var.
 # Leave unset to connect directly.
@@ -23,7 +24,7 @@ def is_direct_video_url(video_url):
     """Reject site homepages and known non-video URLs before yt-dlp runs.
 
     Delegates to the same SiteAdapter rules the search pipeline uses (see
-    search.py), so a site rule only needs to change in one place.
+    ``search.engine``), so a site rule only needs to change in one place.
     """
     parsed = urlparse(video_url)
     host = parsed.netloc.casefold().split(":", 1)[0]
@@ -42,6 +43,7 @@ def is_direct_video_url(video_url):
 
 def build_ydl_options(video_url=None):
     options = {
+        **common_ydl_options(),
         "format": "bestvideo+bestaudio/best",
         "noplaylist": True,
         "merge_output_format": "mp4",
@@ -66,10 +68,10 @@ def build_ydl_options(video_url=None):
     return options
 
 
-def download_video(video_url, progress=None):
+def download_video(video_url, progress=None) -> bool:
     if not is_direct_video_url(video_url):
         print(f"Skipping non-video URL: {video_url}")
-        return
+        return False
     download_url = video_url
     output_title = None
     output_id = None
@@ -79,19 +81,19 @@ def download_video(video_url, progress=None):
             print(f"PMVHaven title: {metadata.title}")
             if not metadata.media_url:
                 print("PMVHaven API did not provide a downloadable media URL.")
-                return
+                return False
             download_url = metadata.media_url
             print(f"PMVHaven media source: {download_url}")
             output_title = re.sub(r"[\\/:*?\"<>|]+", "_", metadata.title).strip() or "video"
             output_id = metadata.video_id
         except (requests.RequestException, TypeError, ValueError) as error:
             print(f"PMVHaven API validation failed: {error}")
-            return
+            return False
 
     if shutil.which("ffmpeg") is None:
         print("ffmpeg is required to merge and repair MP4 streams.")
-        print("Install it with: brew install ffmpeg")
-        return
+        print("Install FFmpeg and ensure ffmpeg.exe is on PATH.")
+        return False
 
     print(f"Downloading: {video_url}")
     import yt_dlp
@@ -116,22 +118,13 @@ def download_video(video_url, progress=None):
             cancellation.stop()
         if error_code:
             print(f"Download failed for {video_url} (exit code {error_code})")
+            return False
         else:
             print(f"Download complete: {OUTPUT_FOLDER}")
+            return True
     except DownloadCancelled:
         print("Download cancelled by user.")
+        return False
     except yt_dlp.utils.DownloadError as error:
         print(f"Error downloading {video_url}: {error}")
-
-
-def main() -> None:
-    try:
-        from .cli import run_download_alias
-
-        run_download_alias()
-    except (KeyboardInterrupt, EOFError):
-        print("\nStopped by user.")
-
-
-if __name__ == "__main__":
-    main()
+        return False

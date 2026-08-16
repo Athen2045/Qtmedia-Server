@@ -5,6 +5,7 @@ from __future__ import annotations
 import select
 import sys
 import threading
+import time
 
 CANCEL_WORDS = {"q", "quit", "exit"}
 # How long the listener waits on stdin before rechecking whether the download
@@ -71,6 +72,10 @@ class DownloadCancellation:
             raise DownloadCancelled
 
     def _listen(self) -> None:
+        if sys.platform == "win32":
+            self._listen_windows()
+            return
+
         while not self._stopped.is_set():
             try:
                 ready, _, _ = select.select([sys.stdin], [], [], POLL_SECONDS)
@@ -91,3 +96,30 @@ class DownloadCancellation:
             if line.strip().casefold() in CANCEL_WORDS:
                 self.cancelled.set()
                 return
+
+    def _listen_windows(self) -> None:
+        """Listen to a Windows console without using ``select``.
+
+        ``select.select`` only supports sockets on Windows; passing a console
+        stream raises ``OSError``. ``msvcrt.kbhit``/``getwch`` are the
+        standard-library console primitives and let us keep the same ``q`` +
+        Enter behavior without blocking ``stop``.
+        """
+        import msvcrt
+
+        line: list[str] = []
+        while not self._stopped.is_set():
+            if not msvcrt.kbhit():
+                time.sleep(POLL_SECONDS)
+                continue
+            character = msvcrt.getwch()
+            if character in {"\r", "\n"}:
+                if "".join(line).strip().casefold() in CANCEL_WORDS:
+                    self.cancelled.set()
+                    return
+                line.clear()
+            elif character in {"\b", "\x7f"}:
+                if line:
+                    line.pop()
+            elif character not in {"\x00", "\xe0"}:
+                line.append(character)

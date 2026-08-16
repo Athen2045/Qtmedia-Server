@@ -1,4 +1,4 @@
-from private_search.lustpress import _records
+from private_search.sources.lustpress import _records
 
 
 def test_lustpress_records_accepts_normalized_payload_shapes():

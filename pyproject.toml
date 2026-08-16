@@ -12,6 +12,8 @@ dependencies = [
   "beautifulsoup4>=4.12",
   "requests>=2.31",
   "rich>=13.7",
+  "rapidfuzz>=3.0",
+  "Pillow>=10.0",
   "typer>=0.12",
   "yt-dlp>=2025.1.0",
 ]
@@ -20,9 +22,9 @@ dependencies = [
 dev = ["pylint>=3.0", "pytest>=8.0", "ruff>=0.6"]
 
 [project.scripts]
-qt = "private_search.cli:app"
-private-search = "private_search.cli:run_search_alias"
-private-download = "private_search.cli:run_download_alias"
+qt = "private_search.app.cli:app"
+private-search = "private_search.app.cli:run_search_alias"
+private-download = "private_search.app.cli:run_download_alias"
 
 [tool.setuptools.packages.find]
 where = ["src"]

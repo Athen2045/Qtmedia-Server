@@ -5,7 +5,8 @@ import time
 
 import pytest
 
-from private_search.download_control import (
+from private_search.download import control as download_control
+from private_search.download.control import (
     DownloadCancellation,
     DownloadCancelled,
 )
@@ -90,3 +91,23 @@ def test_stop_is_safe_without_start():
     cancellation = DownloadCancellation()
     cancellation.stop()
     assert not cancellation.cancelled.is_set()
+
+
+def test_windows_listener_uses_console_input(monkeypatch):
+    """Windows consoles cannot be passed to select.select."""
+    characters = iter(["q", "\r"])
+    fake_msvcrt = type(
+        "FakeMsvcrt",
+        (),
+        {
+            "kbhit": staticmethod(lambda: True),
+            "getwch": staticmethod(lambda: next(characters)),
+        },
+    )
+    monkeypatch.setattr(download_control.sys, "platform", "win32")
+    monkeypatch.setitem(sys.modules, "msvcrt", fake_msvcrt)
+
+    cancellation = DownloadCancellation()
+    cancellation._listen()
+
+    assert cancellation.cancelled.is_set()

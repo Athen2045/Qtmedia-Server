@@ -1,4 +1,4 @@
-from private_search.pmvhaven import extract_video_id, is_pmvhaven_url
+from private_search.sources.pmvhaven import extract_video_id, is_pmvhaven_url
 
 VIDEO_URL = "https://pmvhaven.com/video/0123456789abcdef01234567/example"
 SLUGGED_VIDEO_URL = "https://pmvhaven.com/video/stamina-training-unit_6a3be99413e186bd6f619c2e?from=popular"

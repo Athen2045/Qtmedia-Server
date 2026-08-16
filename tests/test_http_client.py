@@ -1,6 +1,6 @@
 import requests
 
-from private_search import http_client
+from private_search.net import http_client
 
 
 class _Response:

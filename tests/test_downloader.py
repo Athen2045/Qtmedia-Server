@@ -1,9 +1,9 @@
 import sys
 import types
 
-from private_search import downloader as downloader_module
-from private_search import http_client
-from private_search.downloader import download_video, is_direct_video_url
+from private_search.download import engine as downloader_module
+from private_search.download.engine import download_video, is_direct_video_url
+from private_search.net import http_client
 
 
 class _FakeYDL:
@@ -70,14 +70,40 @@ def test_download_video_sets_quiet_only_when_progress_given(monkeypatch):
     assert len(captured["progress_hooks"]) == 2
 
 
+def test_build_ydl_options_includes_resilient_transfer_policy(monkeypatch):
+    monkeypatch.delenv("PRIVATE_SEARCH_CONCURRENT_FRAGMENTS", raising=False)
+    monkeypatch.delenv("PRIVATE_SEARCH_HTTP_CHUNK_SIZE", raising=False)
+
+    options = downloader_module.build_ydl_options("https://www.xvideos.com/video123/title")
+
+    assert options["retries"] == http_client.RETRY_ATTEMPTS
+    assert options["fragment_retries"] == http_client.RETRY_ATTEMPTS
+    assert options["socket_timeout"] == 20
+    assert options["continuedl"] is True
+    assert options["concurrent_fragment_downloads"] == 4
+    assert "http_chunk_size" not in options
+
+
+def test_build_ydl_options_caps_configured_fragment_concurrency(monkeypatch):
+    monkeypatch.setenv("PRIVATE_SEARCH_CONCURRENT_FRAGMENTS", "99")
+
+    options = downloader_module.build_ydl_options("https://www.xvideos.com/video123/title")
+
+    assert options["concurrent_fragment_downloads"] == 8
+
+
 def test_direct_url_validation():
     assert is_direct_video_url("https://www.xvideos.com/video.abc/title")
     assert not is_direct_video_url("https://www.xvideos.com/")
     assert not is_direct_video_url("https://www.xvideos.com/video...")
 
 
+def test_download_video_reports_invalid_url(monkeypatch):
+    assert download_video("not-a-video-url") is False
+
+
 def test_direct_url_validation_shares_xhamster_creator_exclusion_with_search():
-    """downloader.py must reuse search.py's SiteAdapter rules, not a stale copy."""
+    """The downloader must reuse search.engine's SiteAdapter rules, not a stale copy."""
     assert is_direct_video_url("https://xhamster.com/videos/example-title")
     assert not is_direct_video_url("https://xhamster.com/creators/videos/example")
 

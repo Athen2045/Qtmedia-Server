@@ -1,16 +1,15 @@
 """Interactive multi-site video search and download CLI.
 
-This is the search companion to download.py. It searches result pages with
+This is the search engine behind the interactive application. It searches result pages with
 site adapters, then lets yt-dlp inspect and download only direct video URLs.
 """
 
 from __future__ import annotations
 
-import difflib
 import json
 import re
-import signal
 import sqlite3
+import threading
 import time
 from concurrent.futures import (  # pylint: disable=no-name-in-module
     ThreadPoolExecutor,
@@ -22,11 +21,15 @@ from urllib.parse import parse_qsl, quote_plus, urlencode, urljoin, urlparse, ur
 import requests
 from bs4 import BeautifulSoup
 
-from . import http_client
-from .config import DOWNLOAD_ROOT, SEARCH_CACHE, ensure_runtime_directories
-from .lustpress import is_configured as lustpress_is_configured
-from .lustpress import search_site as lustpress_search_site
-from .pmvhaven import fetch_metadata, is_pmvhaven_url
+from ..config import DOWNLOAD_ROOT, SEARCH_CACHE, ensure_runtime_directories
+from ..download.transfer import REQUEST_TIMEOUT as TRANSFER_REQUEST_TIMEOUT
+from ..download.transfer import common_ydl_options
+from ..net import http_client
+from ..sources.lustpress import is_configured as lustpress_is_configured
+from ..sources.lustpress import search_site as lustpress_search_site
+from ..sources.pmvhaven import fetch_metadata, is_pmvhaven_url
+from .quality import normalize_text, term_matches
+from .quality import relevance_score as quality_relevance_score
 
 ensure_runtime_directories()
 OUTPUT_FOLDER = DOWNLOAD_ROOT
@@ -35,7 +38,7 @@ OUTPUT_FOLDER = DOWNLOAD_ROOT
 MIN_VIEWS = 0
 DEFAULT_FILTERS: list[str] = []
 DEFAULT_EXCLUDES = ["ai", "ai-generated", "vr"]
-REQUEST_TIMEOUT = 20
+REQUEST_TIMEOUT = TRANSFER_REQUEST_TIMEOUT
 MAX_CANDIDATES_PER_SITE = 20
 SEARCH_WORKERS = 8
 INSPECTION_WORKERS = 4
@@ -116,6 +119,7 @@ class VideoResult:
     view_count: int | None
     max_height: int
     max_tbr: float
+    thumbnail_url: str | None = None
 
     @property
     def quality_score(self) -> tuple[int, float]:
@@ -196,6 +200,7 @@ def ydl_options(impersonate: str | None = None) -> dict:
     the candidate's adapter; None uses the shared default.
     """
     options = {
+        **common_ydl_options(),
         "format": "bestvideo+bestaudio/best",
         "noplaylist": True,
         "merge_output_format": "mp4",
@@ -205,9 +210,7 @@ def ydl_options(impersonate: str | None = None) -> dict:
         # These sites reset connections intermittently rather than cleanly
         # refusing, the same way their search backends do; a single attempt
         # would otherwise report an available video as unavailable.
-        "retries": http_client.RETRY_ATTEMPTS,
         "extractor_retries": http_client.RETRY_ATTEMPTS,
-        "socket_timeout": REQUEST_TIMEOUT,
     }
     target = http_client.ytdlp_impersonate_target(impersonate)
     if target:
@@ -220,7 +223,7 @@ def ydl_options(impersonate: str | None = None) -> dict:
 
 
 def normalize_title(title: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", title.casefold()).strip()
+    return normalize_text(title)
 
 
 def canonical_url(url: str) -> str:
@@ -258,6 +261,29 @@ def is_video_candidate(adapter: SiteAdapter, path: str) -> bool:
     return re.search(adapter.video_pattern, path) is not None
 
 
+def _parse_candidates(adapter: SiteAdapter, search_url: str, html: str, query: str) -> list[SearchCandidate]:
+    soup = BeautifulSoup(html, "html.parser")
+    scope = soup
+    if adapter.result_container_id:
+        scope = soup.find(id=adapter.result_container_id) or soup
+    candidates_by_key: dict[str, SearchCandidate] = {}
+    for anchor in scope.find_all("a", href=True):
+        href = urljoin(search_url, anchor["href"])
+        path = urlparse(href).path
+        title = anchor.get("title") or anchor.get_text(" ", strip=True)
+        if not (is_video_candidate(adapter, path) and title):
+            continue
+        candidate_key = canonical_url(href)
+        existing = candidates_by_key.get(candidate_key)
+        if existing is None or (is_duration_label(existing.title) and not is_duration_label(title)):
+            candidates_by_key[candidate_key] = SearchCandidate(adapter.name, title, href)
+    return sorted(
+        candidates_by_key.values(),
+        key=lambda candidate: quality_relevance_score(candidate.title, query),
+        reverse=True,
+    )[:MAX_CANDIDATES_PER_SITE]
+
+
 def parse_int(value: str | None) -> int | None:
     if not value:
         return None
@@ -267,6 +293,54 @@ def parse_int(value: str | None) -> int | None:
     number = float(match.group(1).replace(",", ""))
     multiplier = {"K": 1_000, "M": 1_000_000, "B": 1_000_000_000}
     return int(number * multiplier.get(match.group(2), 1))
+
+
+XVIDEOS_VIEW_PATTERN = re.compile(
+    r'<div[^>]+id=["\']v-views["\'][\s\S]*?'
+    r'<strong[^>]+class=["\'][^"\']*mobile-hide[^"\']*["\'][^>]*>'
+    r'(?P<views>[\d,.]+)',
+    re.IGNORECASE,
+)
+
+
+def thumbnail_url_from_info(info: dict) -> str | None:
+    """Return yt-dlp's preferred thumbnail, including extractor thumbnail lists."""
+    thumbnail = info.get("thumbnail")
+    if isinstance(thumbnail, str) and thumbnail.startswith(("http://", "https://")):
+        return thumbnail
+    thumbnails = info.get("thumbnails")
+    if not isinstance(thumbnails, list):
+        return None
+    for item in reversed(thumbnails):
+        if not isinstance(item, dict):
+            continue
+        candidate = item.get("url")
+        if isinstance(candidate, str) and candidate.startswith(("http://", "https://")):
+            return candidate
+    return None
+
+
+def xvideos_view_count(url: str, site: str) -> int | None:
+    """Read XVideos' visible view count when its yt-dlp extractor omits it."""
+    if site != "XVideos":
+        return None
+    try:
+        with http_client.new_session(impersonate=impersonate_for_url(url)) as session:
+            response = http_client.get(
+                session,
+                url,
+                headers=http_client.request_headers(),
+                timeout=REQUEST_TIMEOUT,
+                stream=True,
+            )
+            if not response.ok:
+                response.close()
+                return None
+            html = http_client.read_text(response)
+    except http_client.HTTP_EXCEPTIONS:
+        return None
+    match = XVIDEOS_VIEW_PATTERN.search(html)
+    return parse_int(match.group("views")) if match else None
 
 
 def search_adapter(
@@ -289,8 +363,7 @@ def search_adapter(
     if start_delay > 0:
         time.sleep(start_delay)
     last_error: Exception | None = None
-    html: str | None = None
-    search_url = ""
+    candidates: list[SearchCandidate] = []
     try:
         with http_client.new_session(impersonate=adapter.impersonate) as session:
             for search_url in adapter.make_search_urls(query):
@@ -311,32 +384,15 @@ def search_adapter(
                         response.close()
                         response.raise_for_status()
                     html = http_client.read_text(response)
-                    break
+                    candidates = _parse_candidates(adapter, search_url, html, query)
+                    if candidates:
+                        break
                 except http_client.HTTP_EXCEPTIONS as error:
                     last_error = error
-                    html = None
     except http_client.HTTP_EXCEPTIONS as error:
         last_error = error
-    if html is None:
+    if not candidates and last_error is not None:
         print(f"[{adapter.name}] search failed: {last_error}")
-        return []
-
-    soup = BeautifulSoup(html, "html.parser")
-    scope = soup
-    if adapter.result_container_id:
-        scope = soup.find(id=adapter.result_container_id) or soup
-    candidates_by_key: dict[str, SearchCandidate] = {}
-    for anchor in scope.find_all("a", href=True):
-        href = urljoin(search_url, anchor["href"])
-        path = urlparse(href).path
-        title = anchor.get("title") or anchor.get_text(" ", strip=True)
-        if not (is_video_candidate(adapter, path) and title):
-            continue
-        candidate_key = canonical_url(href)
-        existing = candidates_by_key.get(candidate_key)
-        if existing is None or (is_duration_label(existing.title) and not is_duration_label(title)):
-            candidates_by_key[candidate_key] = SearchCandidate(adapter.name, title, href)
-    candidates = list(candidates_by_key.values())[:MAX_CANDIDATES_PER_SITE]
     cache_candidates(cache_key, candidates)
     return candidates
 
@@ -346,13 +402,11 @@ def search_lustpress(query: str) -> list[SearchCandidate]:
     if not lustpress_is_configured():
         return []
     init_cache()
-    candidates: list[SearchCandidate] = []
-    for site in ("xvideos", "xhamster", "youporn"):
+    def search_one(site: str) -> list[SearchCandidate]:
         cache_key = f"Lustpress/{site}:{query.casefold()}"
         cached = load_cached_candidates(cache_key)
         if cached is not None:
-            candidates.extend(cached)
-            continue
+            return cached
         try:
             site_candidates = [
                 SearchCandidate(item.site, item.title, item.url)
@@ -360,9 +414,15 @@ def search_lustpress(query: str) -> list[SearchCandidate]:
             ]
         except (requests.RequestException, ValueError) as error:
             print(f"[Lustpress/{site}] search failed: {error}")
-            continue
+            return []
         cache_candidates(cache_key, site_candidates)
-        candidates.extend(site_candidates)
+        return site_candidates
+
+    candidates: list[SearchCandidate] = []
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        searches = [pool.submit(search_one, site) for site in ("xvideos", "xhamster", "youporn")]
+        for future in as_completed(searches):
+            candidates.extend(future.result())
     return candidates[: MAX_CANDIDATES_PER_SITE * 3]
 
 
@@ -372,34 +432,44 @@ def text_passes_filters(
     filters: list[str],
     excludes: list[str],
 ) -> bool:
-    text = f"{title} {url}".casefold()
+    text = f"{title} {url}"
     # Search-page anchor text is often a duration, username, or thumbnail
     # label. Include filters are therefore applied after yt-dlp extracts the
     # canonical title; only exclusions are safe at this early stage.
-    return not any(term.casefold() in text for term in excludes)
+    return not any(term_matches(text, term) for term in excludes)
+
+
+_CACHE_INIT_LOCK = threading.Lock()
+_INITIALIZED_CACHE: str | None = None
 
 
 def init_cache() -> None:
-    with sqlite3.connect(SEARCH_CACHE, timeout=30) as connection:
-        connection.execute("PRAGMA journal_mode=WAL")
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS inspected_videos (
-                url TEXT PRIMARY KEY,
-                checked_at REAL NOT NULL,
-                payload TEXT NOT NULL
+    global _INITIALIZED_CACHE
+    cache_path = str(SEARCH_CACHE)
+    with _CACHE_INIT_LOCK:
+        if _INITIALIZED_CACHE == cache_path:
+            return
+        with sqlite3.connect(SEARCH_CACHE, timeout=30) as connection:
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS inspected_videos (
+                    url TEXT PRIMARY KEY,
+                    checked_at REAL NOT NULL,
+                    payload TEXT NOT NULL
+                )
+                """
             )
-            """
-        )
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS search_pages (
-                cache_key TEXT PRIMARY KEY,
-                checked_at REAL NOT NULL,
-                payload TEXT NOT NULL
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS search_pages (
+                    cache_key TEXT PRIMARY KEY,
+                    checked_at REAL NOT NULL,
+                    payload TEXT NOT NULL
+                )
+                """
             )
-            """
-        )
+        _INITIALIZED_CACHE = cache_path
 
 
 def load_cached_result(url: str) -> VideoResult | None:
@@ -412,6 +482,8 @@ def load_cached_result(url: str) -> VideoResult | None:
     if not row or row[0] < cutoff:
         return None
     data = json.loads(row[1])
+    if "thumbnail_url" not in data:
+        return None
     return VideoResult(**data)
 
 
@@ -436,6 +508,7 @@ def cache_result(result: VideoResult, cache_key: str | None = None) -> None:
                         "view_count": result.view_count,
                         "max_height": result.max_height,
                         "max_tbr": result.max_tbr,
+                        "thumbnail_url": result.thumbnail_url,
                     }
                 ),
             ),
@@ -482,17 +555,16 @@ def inspect_candidate(candidate: SearchCandidate) -> VideoResult | None:
 
     import yt_dlp
 
-    pmv_metadata = None
-    if is_pmvhaven_url(candidate.url):
-        try:
-            pmv_metadata = fetch_metadata(candidate.url)
-        except (requests.RequestException, TypeError, ValueError) as error:
-            print(f"[PMVHaven] API metadata unavailable: {error}")
-
     try:
         with yt_dlp.YoutubeDL(ydl_options(impersonate_for_url(candidate.url))) as ydl:
             info = ydl.extract_info(candidate.url, download=False)
     except yt_dlp.utils.DownloadError as error:
+        pmv_metadata = None
+        if is_pmvhaven_url(candidate.url):
+            try:
+                pmv_metadata = fetch_metadata(candidate.url)
+            except (requests.RequestException, TypeError, ValueError) as metadata_error:
+                print(f"[PMVHaven] API metadata unavailable: {metadata_error}")
         if pmv_metadata:
             result = VideoResult(
                 title=pmv_metadata.title,
@@ -510,13 +582,18 @@ def inspect_candidate(candidate: SearchCandidate) -> VideoResult | None:
     formats = info.get("formats") or []
     heights = [int(item["height"]) for item in formats if item.get("height")]
     bitrates = [float(item["tbr"]) for item in formats if item.get("tbr")]
+    raw_view_count = info.get("view_count")
+    view_count = raw_view_count if isinstance(raw_view_count, int) and not isinstance(raw_view_count, bool) else None
+    if view_count is None:
+        view_count = xvideos_view_count(candidate.url, candidate.site)
     result = VideoResult(
         title=info.get("title") or (pmv_metadata.title if pmv_metadata else None) or info.get("id") or candidate.url,
         url=info.get("webpage_url") or candidate.url,
         site=candidate.site,
-        view_count=info.get("view_count"),
+        view_count=view_count,
         max_height=max(heights, default=0),
         max_tbr=max(bitrates, default=0),
+        thumbnail_url=thumbnail_url_from_info(info),
     )
     cache_result(result, candidate.url)
     return result
@@ -541,33 +618,18 @@ def filter_rejection_reason(
 ) -> str | None:
     """Return why a result was rejected, or None when it passes."""
     text = f"{extra_text} {result.title} {result.url}".casefold()
-    if result.view_count is not None and result.view_count < min_views:
+    if min_views > 0 and (result.view_count is None or result.view_count < min_views):
         return "minimum views"
-    if any(term.casefold() in text for term in excludes):
+    if any(term_matches(text, term) for term in excludes):
         return "exclusion"
-    if filters and not any(term.casefold() in text for term in filters):
+    if filters and not any(term_matches(text, term) for term in filters):
         return "include filter"
     return None
 
 
-def relevance_score(title: str, query: str) -> tuple[float, float, float]:
-    """How well a title matches the search query, most-significant term first.
-
-    Priority order: an exact substring match beats any partial match; among
-    partial matches, covering more of the query's words beats fewer; ties
-    break on overall text closeness. This is what "most accurate title
-    first" means here — matching the query text, not the file's resolution.
-    """
-    norm_title = normalize_title(title)
-    norm_query = normalize_title(query)
-    if not norm_query:
-        return (0.0, 0.0, 0.0)
-    exact = 1.0 if norm_query in norm_title else 0.0
-    query_words = norm_query.split()
-    title_words = set(norm_title.split())
-    coverage = sum(1 for word in query_words if word in title_words) / len(query_words)
-    closeness = difflib.SequenceMatcher(None, norm_query, norm_title).ratio()
-    return (exact, coverage, closeness)
+def relevance_score(title: str, query: str) -> tuple[float, ...]:
+    """Return a relevance tuple with exact, phrase, token, and fuzzy signals."""
+    return quality_relevance_score(title, query)
 
 
 def deduplicate(results: list[VideoResult], query: str = "") -> list[VideoResult]:
@@ -593,17 +655,14 @@ def search(
 ) -> list[VideoResult]:
     init_cache()
     candidates: list[SearchCandidate] = []
-    if lustpress_is_configured():
-        candidates.extend(
-            candidate
-            for candidate in search_lustpress(query)
-            if text_passes_filters(candidate.title, candidate.url, filters, excludes)
-        )
-    with ThreadPoolExecutor(max_workers=min(SEARCH_WORKERS, len(ADAPTERS))) as pool:
-        searches = [
-            pool.submit(search_adapter, adapter, query, index * SEARCH_STAGGER_SECONDS)
+    max_workers = min(SEARCH_WORKERS, len(ADAPTERS) + int(lustpress_is_configured()))
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        searches = {
+            pool.submit(search_adapter, adapter, query, index * SEARCH_STAGGER_SECONDS): adapter
             for index, adapter in enumerate(ADAPTERS)
-        ]
+        }
+        if lustpress_is_configured():
+            searches[pool.submit(search_lustpress, query)] = None
         for future in as_completed(searches):
             try:
                 found_candidates = future.result()
@@ -676,28 +735,6 @@ def inspect_direct_url(url: str) -> VideoResult | None:
     """Inspect a user-provided URL with yt-dlp without downloading it."""
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        print("Enter a complete http:// or https:// video URL.")
         return None
 
-    result = inspect_candidate(SearchCandidate(site_name_for_url(url), url, url))
-    if result:
-        quality = f"{result.max_height}p" if result.max_height else "unknown quality"
-        print(f"Title: {result.title}")
-        print(f"Site: {result.site}")
-        print(f"Best quality: {quality}")
-        print(f"URL: {result.url}")
-    return result
-
-
-def main() -> None:
-    signal.signal(signal.SIGINT, signal.default_int_handler)
-    try:
-        from .cli import run_search_alias
-
-        run_search_alias()
-    except (KeyboardInterrupt, EOFError):
-        print("\nStopped by user.")
-
-
-if __name__ == "__main__":
-    main()
+    return inspect_candidate(SearchCandidate(site_name_for_url(url), url, url))
