@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -82,6 +85,21 @@ def _request(tmp_path: Path, image_path: Path, **overrides: object) -> dict[str,
         "keep_crops": False,
         **overrides,
     }
+
+
+def _face(
+    *,
+    bbox: list[float] | None = None,
+    kps: list[float] | None = None,
+    embedding: list[float] | None = None,
+    det_score: float = 0.93,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        bbox=bbox or [1.0, 2.0, 10.0, 12.0],
+        kps=kps or [1.0, 1.0, 3.0, 1.0, 2.0, 2.0, 1.0, 3.0, 3.0, 3.0],
+        embedding=embedding or [1.0, 0.0],
+        det_score=det_score,
+    )
 
 
 def test_insightface_settings_from_environment(monkeypatch, tmp_path: Path):
@@ -239,3 +257,147 @@ def test_worker_requires_explicit_cpu_fallback(monkeypatch, tmp_path: Path):
 
     with pytest.raises(WorkerConfigurationError, match="CUDAExecutionProvider"):
         handle_request(_request(tmp_path, image_path, provider_policy="cuda"))
+
+
+def test_worker_main_supports_script_launch_from_adapter(tmp_path: Path):
+    image_root = tmp_path / "images"
+    image_root.mkdir()
+    image_path = image_root / "query.jpg"
+    image_path.write_bytes(b"query")
+    request = _request(tmp_path, image_path)
+    worker = config.PROJECT_ROOT / "src" / "private_search" / "osint" / "insightface_worker.py"
+    environment = os.environ.copy()
+    source_root = str(config.PROJECT_ROOT / "src")
+    existing_pythonpath = environment.get("PYTHONPATH", "")
+    environment["PYTHONPATH"] = (
+        source_root if not existing_pythonpath else os.pathsep.join((source_root, existing_pythonpath))
+    )
+
+    completed = subprocess.run(
+        [sys.executable, str(worker)],
+        input=json.dumps(request),
+        capture_output=True,
+        text=True,
+        cwd=str(config.PROJECT_ROOT),
+        env=environment,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    assert "attempted relative import" not in completed.stderr
+
+
+def test_worker_analyze_does_not_refresh_or_search(monkeypatch, tmp_path: Path):
+    image_root = tmp_path / "images"
+    image_root.mkdir()
+    image_path = image_root / "query.jpg"
+    image_path.write_bytes(b"query")
+    _install_fake_insightface_modules(
+        monkeypatch,
+        providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+        faces=[_face()],
+    )
+    refresh_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    search_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def fake_refresh_images(self, *args, **kwargs):
+        refresh_calls.append((args, kwargs))
+        return SimpleNamespace(pending_images=(), reused_images=(), deleted_paths=())
+
+    def fake_search(self, *args, **kwargs):
+        search_calls.append((args, kwargs))
+        return []
+
+    monkeypatch.setattr("private_search.osint.insightface_worker.FaceIndex.refresh_images", fake_refresh_images)
+    monkeypatch.setattr("private_search.osint.insightface_worker.FaceIndex.search", fake_search)
+
+    payload = handle_request(_request(tmp_path, image_path, operation="analyze"))
+
+    assert payload["faces"]
+    assert payload["local_matches"] == []
+    assert payload["crops"]
+    assert refresh_calls == []
+    assert search_calls == []
+
+
+def test_worker_refresh_only_updates_index(monkeypatch, tmp_path: Path):
+    image_root = tmp_path / "images"
+    image_root.mkdir()
+    query_path = image_root / "query.jpg"
+    query_path.write_bytes(b"query")
+    other_path = image_root / "other.png"
+    other_path.write_bytes(b"other")
+    _install_fake_insightface_modules(
+        monkeypatch,
+        providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+        faces=[_face()],
+    )
+    search_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def fake_search(self, *args, **kwargs):
+        search_calls.append((args, kwargs))
+        return []
+
+    monkeypatch.setattr("private_search.osint.insightface_worker.FaceIndex.search", fake_search)
+
+    payload = handle_request(_request(tmp_path, query_path, operation="refresh"))
+
+    assert payload["faces"] == []
+    assert payload["local_matches"] == []
+    assert payload["crops"] == []
+    assert search_calls == []
+
+
+def test_worker_rejects_images_outside_root(monkeypatch, tmp_path: Path):
+    image_root = tmp_path / "images"
+    image_root.mkdir()
+    outside = tmp_path / "outside.jpg"
+    outside.write_bytes(b"query")
+    _install_fake_insightface_modules(
+        monkeypatch,
+        providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+        faces=[],
+    )
+
+    with pytest.raises(WorkerConfigurationError, match="image_root"):
+        handle_request(_request(tmp_path, outside))
+
+
+def test_worker_rejects_unsupported_suffix(monkeypatch, tmp_path: Path):
+    image_root = tmp_path / "images"
+    image_root.mkdir()
+    image_path = image_root / "query.gif"
+    image_path.write_bytes(b"query")
+    _install_fake_insightface_modules(
+        monkeypatch,
+        providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+        faces=[],
+    )
+
+    with pytest.raises(WorkerConfigurationError, match="supported image file"):
+        handle_request(_request(tmp_path, image_path))
+
+
+def test_worker_cleans_temporary_index_crops_on_failure(monkeypatch, tmp_path: Path):
+    image_root = tmp_path / "images"
+    image_root.mkdir()
+    query_path = image_root / "query.jpg"
+    query_path.write_bytes(b"query")
+    indexed_path = image_root / "indexed.jpg"
+    indexed_path.write_bytes(b"indexed")
+    _install_fake_insightface_modules(
+        monkeypatch,
+        providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+        faces=[_face()],
+    )
+    indexed_crop = tmp_path / "crops" / "indexed-face-1.jpg"
+
+    def failing_search(self, *args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("private_search.osint.insightface_worker.FaceIndex.search", failing_search)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        handle_request(_request(tmp_path, query_path, operation="reverse"))
+
+    assert not indexed_crop.exists()

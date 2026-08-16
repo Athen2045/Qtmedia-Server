@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import stat
 import sys
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .face_store import FaceIndex, FaceRecord, ImageRecord
+try:  # pragma: no branch - one import path succeeds depending on launch mode
+    from .face_store import FaceIndex, FaceRecord, ImageRecord
+except ImportError:  # pragma: no cover - exercised by script-launch regression test
+    from private_search.osint.face_store import FaceIndex, FaceRecord, ImageRecord
 
 _SUPPORTED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 
@@ -43,48 +47,70 @@ def handle_request(request: dict[str, object]) -> dict[str, object]:
     )
 
     settings.crop_root.mkdir(parents=True, exist_ok=True)
-    image_records = tuple(_discover_images(settings.image_root))
-    with FaceIndex(settings.index_path) as index:
-        report = index.refresh_images(image_records, model_version=version)
-        for image_record in report.pending_images:
-            indexed_faces = _extract_faces(analysis, image_record.path, settings.crop_root)
-            index.upsert_faces(image_record, indexed_faces)
-
-        query_faces = _extract_faces(analysis, settings.image_path, settings.crop_root)
-        local_matches: list[dict[str, object]] = []
-        for face in query_faces:
-            for match in index.search(face.embedding, limit=10):
-                local_matches.append(
-                    {
-                        "face_number": face.face_number,
-                        "image_path": str(match.image_path.resolve()),
-                        "face_id": match.face_id,
-                        "match_face_number": match.face_number,
-                        "score": match.score,
-                        "crop_path": str(face.crop_path.resolve()) if face.crop_path is not None else None,
-                    }
-                )
-
-    return {
+    response = {
         "provider": actual_provider,
         "model_version": version,
-        "faces": [
-            {
-                "face_number": face.face_number,
-                "bbox": list(face.bbox),
-                "landmarks": list(face.landmarks),
-                "detection_score": face.detection_score,
-                "crop_path": str(face.crop_path.resolve()) if face.crop_path is not None else None,
-            }
-            for face in query_faces
-        ],
-        "local_matches": local_matches,
-        "crops": [
-            str(face.crop_path.resolve())
-            for face in query_faces
-            if face.crop_path is not None and face.crop_path.exists()
-        ],
+        "faces": [],
+        "local_matches": [],
+        "crops": [],
     }
+    created_crops: list[Path] = []
+    retained_crops: set[Path] = set()
+    try:
+        with FaceIndex(settings.index_path) as index:
+            if settings.operation in {"refresh", "reverse"}:
+                image_records = tuple(_discover_images(settings.image_root))
+                report = index.refresh_images(image_records, model_version=version)
+                for image_record in report.pending_images:
+                    indexed_faces = _extract_faces(
+                        analysis,
+                        image_record.path,
+                        settings.crop_root,
+                        write_crops=settings.keep_crops,
+                        created_crops=created_crops,
+                    )
+                    index.upsert_faces(image_record, indexed_faces)
+
+            query_faces: list[FaceRecord] = []
+            if settings.operation in {"analyze", "reverse"}:
+                query_faces = _extract_faces(
+                    analysis,
+                    settings.image_path,
+                    settings.crop_root,
+                    write_crops=True,
+                    created_crops=created_crops,
+                )
+                response["faces"] = [_face_payload(face) for face in query_faces]
+                response["crops"] = [
+                    str(face.crop_path.resolve())
+                    for face in query_faces
+                    if face.crop_path is not None and face.crop_path.exists()
+                ]
+                retained_crops = {
+                    face.crop_path.resolve()
+                    for face in query_faces
+                    if face.crop_path is not None
+                }
+
+            if settings.operation == "reverse":
+                local_matches: list[dict[str, object]] = []
+                for face in query_faces:
+                    for match in index.search(face.embedding, limit=10):
+                        local_matches.append(
+                            {
+                                "face_number": face.face_number,
+                                "image_path": str(match.image_path.resolve()),
+                                "face_id": match.face_id,
+                                "match_face_number": match.face_number,
+                                "score": match.score,
+                                "crop_path": str(face.crop_path.resolve()) if face.crop_path is not None else None,
+                            }
+                        )
+                response["local_matches"] = local_matches
+        return response
+    finally:
+        if not settings.keep_crops:
+            _cleanup_crops(path for path in created_crops if path.resolve() not in retained_crops)
 
 
 def main() -> int:
@@ -104,8 +130,12 @@ def _parse_request(request: dict[str, object]) -> _Settings:
     operation = _require_text(request.get("operation"), field="operation")
     if operation not in {"analyze", "refresh", "reverse"}:
         raise WorkerConfigurationError("operation must be analyze, refresh, or reverse")
-    image_path = _require_existing_file(request.get("image_path"), field="image_path")
     image_root = _require_directory(request.get("image_root"), field="image_root")
+    image_path = _require_supported_image_file(
+        request.get("image_path"),
+        field="image_path",
+        image_root=image_root,
+    )
     index_path = _require_path(request.get("index_path"), field="index_path")
     crop_root = _require_path(request.get("crop_root"), field="crop_root")
     insightface_root = _require_directory(
@@ -202,7 +232,7 @@ def _active_provider(analysis: object) -> str | None:
 def _discover_images(image_root: Path) -> list[ImageRecord]:
     images: list[ImageRecord] = []
     for path in sorted(image_root.rglob("*")):
-        if not path.is_file() or path.suffix.casefold() not in _SUPPORTED_IMAGE_SUFFIXES:
+        if not _is_regular_file(path) or path.suffix.casefold() not in _SUPPORTED_IMAGE_SUFFIXES:
             continue
         images.append(_build_image_record(path))
     return images
@@ -234,9 +264,20 @@ def _image_shape(path: Path) -> tuple[int, int]:
     return int(shape[0]), int(shape[1])
 
 
-def _extract_faces(analysis: object, image_path: Path, crop_root: Path) -> list[FaceRecord]:
+def _extract_faces(
+    analysis: object,
+    image_path: Path,
+    crop_root: Path,
+    *,
+    write_crops: bool,
+    created_crops: list[Path],
+) -> list[FaceRecord]:
     import cv2  # type: ignore[import-not-found]
-    from insightface.utils.face_align import norm_crop  # type: ignore[import-not-found]
+
+    if write_crops:
+        from insightface.utils.face_align import (
+            norm_crop,  # type: ignore[import-not-found]
+        )
 
     image = cv2.imread(str(image_path))
     if image is None:
@@ -249,10 +290,13 @@ def _extract_faces(analysis: object, image_path: Path, crop_root: Path) -> list[
         landmarks = [float(value) for value in list(_get_required_sequence(detected_face, "kps"))]
         embedding = [float(value) for value in list(_get_required_sequence(detected_face, "embedding"))]
         detection_score = float(detected_face.det_score)
-        crop_image = norm_crop(image, landmark=landmarks)
-        crop_path = crop_root / f"{image_stem}-face-{number}.jpg"
-        if not cv2.imwrite(str(crop_path), crop_image):
-            raise WorkerConfigurationError(f"failed to write face crop: {crop_path}")
+        crop_path: Path | None = None
+        if write_crops:
+            crop_image = norm_crop(image, landmark=landmarks)
+            crop_path = (crop_root / f"{image_stem}-face-{number}.jpg").resolve()
+            if not cv2.imwrite(str(crop_path), crop_image):
+                raise WorkerConfigurationError(f"failed to write face crop: {crop_path}")
+            created_crops.append(crop_path)
         faces.append(
             FaceRecord(
                 face_id=f"{image_path.resolve().as_posix()}#{uuid.uuid4().hex}",
@@ -261,10 +305,20 @@ def _extract_faces(analysis: object, image_path: Path, crop_root: Path) -> list[
                 landmarks=tuple(landmarks),
                 embedding=tuple(embedding),
                 detection_score=detection_score,
-                crop_path=crop_path.resolve(),
+                crop_path=crop_path,
             )
         )
     return faces
+
+
+def _face_payload(face: FaceRecord) -> dict[str, object]:
+    return {
+        "face_number": face.face_number,
+        "bbox": list(face.bbox),
+        "landmarks": list(face.landmarks),
+        "detection_score": face.detection_score,
+        "crop_path": str(face.crop_path.resolve()) if face.crop_path is not None else None,
+    }
 
 
 def _get_required_sequence(face: object, field: str) -> list[Any]:
@@ -286,8 +340,19 @@ def _require_text(value: object, *, field: str) -> str:
 
 def _require_existing_file(value: object, *, field: str) -> Path:
     path = _require_path(value, field=field)
-    if not path.is_file():
+    if not _is_regular_file(path):
         raise WorkerConfigurationError(f"{field} must point to an existing file")
+    return path
+
+
+def _require_supported_image_file(value: object, *, field: str, image_root: Path) -> Path:
+    path = _require_existing_file(value, field=field)
+    if path.suffix.casefold() not in _SUPPORTED_IMAGE_SUFFIXES:
+        raise WorkerConfigurationError(f"{field} must point to a supported image file")
+    try:
+        path.relative_to(image_root)
+    except ValueError as error:
+        raise WorkerConfigurationError(f"{field} must be inside image_root") from error
     return path
 
 
@@ -304,6 +369,21 @@ def _require_path(value: object, *, field: str) -> Path:
     if not isinstance(value, str) or not value.strip():
         raise WorkerConfigurationError(f"{field} must be a non-empty path")
     return Path(value).expanduser().resolve()
+
+
+def _is_regular_file(path: Path) -> bool:
+    try:
+        return stat.S_ISREG(path.stat().st_mode)
+    except OSError:
+        return False
+
+
+def _cleanup_crops(paths: Any) -> None:
+    for crop_path in paths:
+        try:
+            Path(crop_path).unlink(missing_ok=True)
+        except OSError:
+            continue
 
 
 if __name__ == "__main__":  # pragma: no cover - exercised through subprocess worker tests
