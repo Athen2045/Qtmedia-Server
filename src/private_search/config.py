@@ -7,6 +7,8 @@ RUNTIME_ROOT = PROJECT_ROOT / "var"
 DOWNLOAD_ROOT = RUNTIME_ROOT / "downloads"
 CACHE_ROOT = RUNTIME_ROOT / "cache"
 SEARCH_CACHE = CACHE_ROOT / "search.sqlite3"
+FACE_INDEX_PATH = RUNTIME_ROOT / "face-index.sqlite"
+FACE_CROP_ROOT = RUNTIME_ROOT / "face-crops"
 MODEL_ROOT = RUNTIME_ROOT / "models" / "qwen3.5-4b-uncensored"
 LLAMA_RUNTIME_ROOT = RUNTIME_ROOT / "runtime" / "llama.cpp"
 
@@ -29,3 +31,4 @@ LLAMA_SERVER_EXECUTABLE = _preferred_path(
 def ensure_runtime_directories() -> None:
     DOWNLOAD_ROOT.mkdir(parents=True, exist_ok=True)
     CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+    FACE_CROP_ROOT.mkdir(parents=True, exist_ok=True)
