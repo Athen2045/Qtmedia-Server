@@ -44,6 +44,7 @@ def test_run_json_worker_sends_json_request_and_parses_exactly_one_value(
     assert kwargs["timeout"] == 17
     assert kwargs["capture_output"] is True
     assert kwargs["text"] is True
+    assert kwargs["check"] is False
     assert kwargs["input"] is not None
     assert json.loads(kwargs["input"]) == {"username": "alice", "limit": 3}
     assert kwargs["env"] == {"PRIVATE_SEARCH_TEST": "1"}
@@ -69,6 +70,25 @@ def test_run_json_worker_rejects_trailing_non_whitespace_after_json(
         run_json_worker(["worker.exe"], {}, cwd=tmp_path, timeout_seconds=5)
 
 
+def test_run_json_worker_reports_malformed_json_decode_error(
+    monkeypatch, tmp_path: Path
+):
+    def fake_run(command, **kwargs):
+        return type(
+            "Completed",
+            (),
+            {"returncode": 0, "stdout": "{not json", "stderr": ""},
+        )()
+
+    monkeypatch.setattr("private_search.osint.worker.subprocess.run", fake_run)
+
+    with pytest.raises(WorkerExecutionError) as error:
+        run_json_worker(["worker.exe"], {}, cwd=tmp_path, timeout_seconds=5)
+
+    assert error.value.user_message == "worker produced invalid JSON"
+    assert error.value.diagnostics == "{not json"
+
+
 def test_run_json_worker_reports_non_zero_exit_with_bounded_diagnostics(
     monkeypatch, tmp_path: Path
 ):
@@ -92,6 +112,24 @@ def test_run_json_worker_reports_non_zero_exit_with_bounded_diagnostics(
     assert "x" * 2001 not in message
 
 
+def test_run_json_worker_keeps_startup_message_safe_and_bounds_os_error(
+    monkeypatch, tmp_path: Path
+):
+    raw_detail = "[WinError 2] missing worker at C:\\private\\secret\\worker.exe"
+
+    def fake_run(command, **kwargs):
+        raise OSError(raw_detail)
+
+    monkeypatch.setattr("private_search.osint.worker.subprocess.run", fake_run)
+
+    with pytest.raises(WorkerExecutionError) as error:
+        run_json_worker(["worker.exe"], {}, cwd=tmp_path, timeout_seconds=5)
+
+    assert error.value.user_message == "could not start worker"
+    assert error.value.diagnostics == raw_detail
+    assert str(error.value) == f"could not start worker: {raw_detail}"
+
+
 def test_run_json_worker_reports_timeout(monkeypatch, tmp_path: Path):
     def fake_run(command, **kwargs):
         raise subprocess.TimeoutExpired(cmd=command, timeout=11)
@@ -100,4 +138,3 @@ def test_run_json_worker_reports_timeout(monkeypatch, tmp_path: Path):
 
     with pytest.raises(WorkerExecutionError, match="timed out"):
         run_json_worker(["worker.exe"], {}, cwd=tmp_path, timeout_seconds=11)
-

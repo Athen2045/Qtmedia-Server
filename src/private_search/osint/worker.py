@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 import subprocess
-from pathlib import Path
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 
 _DIAGNOSTIC_LIMIT = 2000
 
@@ -50,13 +50,16 @@ def run_json_worker(
         run_kwargs["env"] = dict(env)
 
     try:
-        completed = subprocess.run(command, **run_kwargs)
+        completed = subprocess.run(command, check=False, **run_kwargs)
     except subprocess.TimeoutExpired as error:
         raise WorkerExecutionError(
             f"worker timed out after {timeout_seconds} seconds",
         ) from error
     except OSError as error:
-        raise WorkerExecutionError(f"could not start worker: {error}") from error
+        raise WorkerExecutionError(
+            "could not start worker",
+            diagnostics=_truncate(str(error)),
+        ) from error
 
     if completed.returncode != 0:
         diagnostics = completed.stderr or completed.stdout or "no diagnostic output"
@@ -98,4 +101,3 @@ def _truncate(text: object) -> str:
     if not isinstance(text, str):
         text = str(text)
     return text[:_DIAGNOSTIC_LIMIT]
-
