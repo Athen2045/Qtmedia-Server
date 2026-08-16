@@ -25,6 +25,8 @@ def make_image(
     height: int = 480,
 ) -> ImageRecord:
     path = (tmp_path / name).resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"image")
     return ImageRecord(
         path=path,
         content_hash=content_hash,
@@ -229,6 +231,75 @@ def test_upsert_faces_replaces_rows_and_stores_normalized_float32_embeddings(tmp
     assert len(embedding) == 2
     assert embedding == pytest.approx((0.8, 0.6), abs=1e-6)
     assert math.isclose(sum(value * value for value in embedding), 1.0, rel_tol=1e-6)
+
+
+def test_face_index_rejects_directory_database_path(tmp_path: Path):
+    database_path = tmp_path / "face-index.sqlite"
+    database_path.mkdir()
+
+    with pytest.raises(ValueError, match="path"):
+        FaceIndex(database_path)
+
+
+def test_refresh_images_rejects_directory_image_paths(tmp_path: Path):
+    image_dir = tmp_path / "nested-image-dir"
+    image_dir.mkdir()
+    image = ImageRecord(
+        path=image_dir,
+        content_hash="hash-dir",
+        file_size=1,
+        modified_at_ns=1,
+        width=640,
+        height=480,
+    )
+
+    with FaceIndex(tmp_path / "face-index.sqlite") as index:
+        with pytest.raises(ValueError, match="image.path"):
+            index.refresh_images([image], model_version="insightface-1")
+
+        assert index._connection.execute("SELECT COUNT(*) FROM images").fetchone()[0] == 0
+
+
+def test_upsert_faces_preserves_refresh_owned_image_metadata(tmp_path: Path):
+    image = make_image(
+        tmp_path,
+        "metadata-owner.jpg",
+        content_hash="hash-refresh",
+        file_size=10,
+        modified_at_ns=100,
+        width=320,
+        height=240,
+    )
+    stale_image = ImageRecord(
+        path=image.path,
+        content_hash="hash-stale",
+        file_size=999,
+        modified_at_ns=999,
+        width=999,
+        height=999,
+    )
+
+    with FaceIndex(tmp_path / "face-index.sqlite") as index:
+        index.refresh_images([image], model_version="insightface-1")
+        index.upsert_faces(stale_image, [make_face("metadata-face", 1, (1.0, 0.0))])
+
+        stored = index._connection.execute(
+            """
+            SELECT content_hash, file_size, modified_at_ns, width, height, face_count, indexed_at
+            FROM images
+            WHERE path = ?
+            """,
+            (image.path.as_posix(),),
+        ).fetchone()
+
+    assert stored is not None
+    assert stored["content_hash"] == image.content_hash
+    assert stored["file_size"] == image.file_size
+    assert stored["modified_at_ns"] == image.modified_at_ns
+    assert stored["width"] == image.width
+    assert stored["height"] == image.height
+    assert stored["face_count"] == 1
+    assert stored["indexed_at"] is not None
 
 
 def test_search_returns_deterministic_cosine_matches_and_empty_index(tmp_path: Path):

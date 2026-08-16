@@ -1,7 +1,7 @@
 # Task 4 Report
 
 Date: 2026-08-16
-Base commit: `b020bc3bbb52e77e1b9c8aef8ec738e688dd31a1`
+Base commit: `db4a169`
 Commit: `feat: add persistent SQLite face index`
 
 ## Changed files

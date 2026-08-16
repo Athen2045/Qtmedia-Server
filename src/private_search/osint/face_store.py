@@ -17,7 +17,13 @@ def _float32(value: float) -> float:
     return struct.unpack("<f", struct.pack("<f", value))[0]
 
 
-def _normalize_path(path: Path, *, field: str) -> Path:
+def _normalize_path(
+    path: Path,
+    *,
+    field: str,
+    require_existing_file: bool = False,
+    reject_existing_directory: bool = False,
+) -> Path:
     if not isinstance(path, Path):
         raise ValueError(f"{field} must be a Path")  # noqa: TRY004
     try:
@@ -26,6 +32,10 @@ def _normalize_path(path: Path, *, field: str) -> Path:
         raise ValueError(f"{field} could not be resolved") from error
     if not resolved.name:
         raise ValueError(f"{field} must point to a file path")
+    if reject_existing_directory and resolved.exists() and resolved.is_dir():
+        raise ValueError(f"{field} must not be an existing directory")
+    if require_existing_file and not resolved.is_file():
+        raise ValueError(f"{field} must point to an existing file")
     return resolved
 
 
@@ -134,7 +144,7 @@ class FaceIndex:
     """Own the SQLite face index and deterministic cosine search."""
 
     def __init__(self, path: Path) -> None:
-        self.path = _normalize_path(path, field="path")
+        self.path = _normalize_path(path, field="path", reject_existing_directory=True)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._connection = sqlite3.connect(str(self.path), timeout=5.0)
         self._connection.row_factory = sqlite3.Row
@@ -367,16 +377,10 @@ class FaceIndex:
             self._connection.execute(
                 """
                 UPDATE images
-                SET content_hash = ?, file_size = ?, modified_at_ns = ?, width = ?, height = ?,
-                    indexed_at = ?, face_count = ?
+                SET indexed_at = ?, face_count = ?
                 WHERE id = ?
                 """,
                 (
-                    normalized_image.content_hash,
-                    normalized_image.file_size,
-                    normalized_image.modified_at_ns,
-                    normalized_image.width,
-                    normalized_image.height,
                     time.time_ns(),
                     len(normalized_faces),
                     image_id,
@@ -472,7 +476,11 @@ class FaceIndex:
 
     @staticmethod
     def _normalize_image(image: ImageRecord) -> ImageRecord:
-        path = _normalize_path(image.path, field="image.path")
+        path = _normalize_path(
+            image.path,
+            field="image.path",
+            require_existing_file=True,
+        )
         return ImageRecord(
             path=path,
             content_hash=_normalize_text(image.content_hash, field="content_hash"),
