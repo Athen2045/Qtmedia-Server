@@ -228,3 +228,11 @@ Result: `All checks passed!`
 
 No live uploads or reverse searches were performed, and SmartImage subprocess
 behavior was not modified.
+
+## Remaining resolver availability correction
+
+Review found one final edge case: when a reverse-image adapter was configured
+but `reverse_image_resolver` was absent, the registry could proceed with
+`image_path=None`. The no-resolver branch now raises the standard
+`ToolUnavailableError` before confirmation or adapter execution. A regression
+test verifies both confirmation requests and adapter calls remain empty.

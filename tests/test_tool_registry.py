@@ -232,3 +232,22 @@ def test_reverse_image_search_without_resolver_stays_unavailable_for_missing_pat
         registry.dispatch(action)
 
     assert confirmation.requests == []
+
+
+def test_reverse_image_search_without_resolver_does_not_run_configured_adapter():
+    confirmation = RecordingConfirmation(approved=True)
+    calls = []
+    registry = ToolRegistry(
+        confirmation,
+        reverse_image_tool=lambda received: calls.append(received) or [],
+    )
+    action = AgentAction(
+        action="reverse_image_search",
+        reason="The user requested reverse search.",
+    )
+
+    with pytest.raises(ToolUnavailableError, match="reverse_image_search"):
+        registry.dispatch(action)
+
+    assert confirmation.requests == []
+    assert calls == []

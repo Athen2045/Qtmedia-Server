@@ -130,7 +130,7 @@ class ToolRegistry:
         if action.image_path is not None:
             return action
         if self._reverse_image_resolver is None:
-            return action
+            raise ToolUnavailableError(f"tool is unavailable: {action.action}")
 
         selected_path = self._reverse_image_resolver()
         if selected_path is None:
