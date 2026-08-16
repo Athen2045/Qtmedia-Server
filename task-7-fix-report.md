@@ -2,6 +2,8 @@
 
 Date: 2026-08-16
 
+Base commit: `d1079a0`
+
 ## Scope
 
 Applied the scoped review fixes from `.superpowers/sdd/blackbird-insightface-theia-integration/task-7-fix-brief.md` without touching the SDD ledger.
@@ -21,7 +23,7 @@ Applied the scoped review fixes from `.superpowers/sdd/blackbird-insightface-the
 - Expanded `tests/test_setup_config.py` with regression coverage for malformed Blackbird timeout/thread values and malformed InsightFace timeout values.
 - Corrected `task-7-report.md` so it reflects the follow-up fix and fresh verification.
 
-## Verification to record after commit
+## Verification
 
 Required pytest:
 
@@ -32,7 +34,7 @@ Required pytest:
 Output:
 
 ```text
-12 passed in 0.03s
+14 passed in 0.03s
 ```
 
 Required Ruff:
@@ -61,6 +63,4 @@ No parse errors.
 
 ## Commit
 
-Message: `fix: harden isolated setup validation`
-
-Hash: Pending until committed.
+Applied in `d1079a0` with message `fix: harden isolated setup validation`

@@ -2,6 +2,8 @@
 
 Date: 2026-08-16
 
+Base commit: `d1079a0`
+
 ## Status
 
 Complete with follow-up fixes from the Task 7 review.
@@ -48,7 +50,7 @@ Required pytest:
 Output:
 
 ```text
-12 passed in 0.03s
+14 passed in 0.03s
 ```
 
 Required Ruff:
@@ -85,5 +87,5 @@ fix: harden isolated setup validation
 Commit hash:
 
 ```text
-Pending until committed.
+d1079a0
 ```

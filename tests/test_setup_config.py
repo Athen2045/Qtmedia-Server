@@ -7,6 +7,36 @@ import pytest
 from private_search import config
 
 
+def _read_setup_script(name: str) -> str:
+    return (config.PROJECT_ROOT / "scripts" / name).read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("script_name", "setup_name"),
+    [
+        ("setup_blackbird.ps1", "Blackbird"),
+        ("setup_insightface.ps1", "InsightFace"),
+    ],
+)
+def test_setup_scripts_require_python_311_before_venv_creation_and_install(
+    script_name: str, setup_name: str
+) -> None:
+    script_text = _read_setup_script(script_name)
+
+    assert "function Assert-Python311OrNewer" in script_text
+    assert 'sys.exit(0 if (major, minor) >= (3, 11) else 1)' in script_text
+
+    guard_index = script_text.index("Assert-Python311OrNewer -Launcher $launcher")
+    venv_index = script_text.index('Invoke-Python -Launcher $launcher -Arguments @("-m", "venv", $targetVenv)')
+    install_index = script_text.index("& $venvPython -m pip install")
+
+    assert guard_index < venv_index
+    assert guard_index < install_index
+    assert (
+        f"Python 3.11+ is required for {setup_name} setup." in script_text
+    )
+
+
 def test_blackbird_defaults_use_isolated_worker_root_and_python() -> None:
     settings = config.BlackbirdRuntimeSettings.from_environment({})
 
