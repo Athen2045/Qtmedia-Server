@@ -6,6 +6,7 @@ import base64
 import hashlib
 import os
 import sys
+import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -49,6 +50,28 @@ def render_thumbnail(url: str | None) -> bool:
         _write_kitty_png(thumbnail)
     except THUMBNAIL_EXCEPTIONS:
         return False
+    return True
+
+
+def render_local_image(path: Path) -> bool:
+    """Render one local image through Kitty graphics when available."""
+    if not is_kitty_terminal() or Image is None or ImageOps is None:
+        return False
+
+    preview_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
+            preview_path = Path(temp_file.name)
+        with Image.open(path) as original:
+            image = ImageOps.exif_transpose(original)
+            image.thumbnail((PREVIEW_WIDTH_PIXELS, PREVIEW_HEIGHT_PIXELS))
+            image.convert("RGBA").save(preview_path, format="PNG", optimize=True)
+        _write_kitty_png(preview_path)
+    except (OSError, ValueError):
+        return False
+    finally:
+        if preview_path is not None:
+            preview_path.unlink(missing_ok=True)
     return True
 
 
