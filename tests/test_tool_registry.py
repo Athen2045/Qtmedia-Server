@@ -143,6 +143,29 @@ def test_configured_username_osint_adapter_runs_after_confirmation():
     assert confirmation.requests[0].action == "username_osint"
 
 
+def test_configured_email_osint_adapter_runs_after_confirmation():
+    confirmation = RecordingConfirmation(approved=True)
+    calls = []
+    action = AgentAction(
+        action="email_osint",
+        reason="The user explicitly requested an email lookup.",
+        email="alice@example.com",
+    )
+    registry = ToolRegistry(
+        confirmation,
+        email_osint_tool=lambda received: calls.append(received) or [{"site": "GitHub"}],
+    )
+
+    result = registry.dispatch(action)
+
+    assert result.ok is True
+    assert result.data == [{"site": "GitHub"}]
+    assert result.message == "Found 1 email result(s)."
+    assert calls == [action]
+    assert confirmation.requests[0].action == "email_osint"
+    assert dict(confirmation.requests[0].details)["Email"] == "alice@example.com"
+
+
 def test_configured_reverse_image_adapter_runs_after_confirmation():
     confirmation = RecordingConfirmation(approved=True)
     calls = []

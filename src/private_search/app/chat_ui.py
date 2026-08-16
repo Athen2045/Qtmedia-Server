@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urlparse
 
 from rich.console import Console
@@ -24,8 +26,8 @@ from ..ai.runtime import (
 )
 from ..ai.tools import ToolExecutionError, ToolRegistry, ToolUnavailableError
 from ..images import discover_images
+from ..osint.blackbird import BlackbirdAdapter
 from ..osint.smartimage import SmartImageAdapter
-from ..osint.tookie import TookieAdapter
 from ..search.preview import render_local_image
 
 
@@ -125,11 +127,11 @@ def execute_local_command(command: LocalCommand, chat: ChatOrchestrator, console
                 "Name: Theia\n"
                 "Personality: sharp, cheeky, concise, security-analyst mindset\n"
                 "Delivery: dry wit, no flirtation, no emojis, no filler\n"
-                f"Model: {config.LLAMA_MODEL.name}\n\n"
+                f"Model: {_configured_model_name()}\n\n"
                 "Application safeguards:\n"
                 "• The model returns a strict validated action schema.\n"
                 "• It cannot create shell commands or select executables.\n"
-                "• Search, downloads, and external tools require confirmation.\n"
+                "• Search, downloads, reverse-image, and username/email OSINT tools require confirmation.\n"
                 "• Tool access is through fixed Python adapters only.\n"
                 "• The model server is restricted to loopback.\n"
                 "• No flirtation, suggestive, romantic, or adult-coded content.\n"
@@ -145,6 +147,16 @@ def execute_local_command(command: LocalCommand, chat: ChatOrchestrator, console
         return True
     console.print(f"[yellow]Unknown command: /{command.name}. Use /help.[/yellow]")
     return True
+
+
+def _configured_model_name() -> str:
+    model_value = os.environ.get("PRIVATE_SEARCH_LLM_MODEL", "").strip()
+    if model_value:
+        return Path(model_value).name
+    configured_model = getattr(config, "LLAMA_MODEL", None)
+    if configured_model is not None:
+        return Path(str(configured_model)).name
+    return "configured locally"
 
 
 def _render_search_results(results: object, console: Console) -> None:
@@ -172,25 +184,68 @@ def _render_search_results(results: object, console: Console) -> None:
     console.print(table)
 
 
-def _render_username_results(results: object, console: Console) -> None:
+def _safe_text(value: object) -> str:
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _format_blackbird_metadata(metadata: object) -> str:
+    if not isinstance(metadata, list) or not metadata:
+        return ""
+    parts: list[str] = []
+    for item in metadata:
+        if isinstance(item, str):
+            text = item.strip()
+            if text:
+                parts.append(text)
+            continue
+        if isinstance(item, dict):
+            label = _safe_text(item.get("label")).strip()
+            value = _safe_text(item.get("value")).strip()
+            if label and value:
+                parts.append(f"{label}: {value}")
+                continue
+            if label:
+                parts.append(label)
+                continue
+            if value:
+                parts.append(value)
+                continue
+        else:
+            text = _safe_text(item).strip()
+            if text:
+                parts.append(text)
+        if len(parts) == 3:
+            break
+    if not parts:
+        return f"{len(metadata)} metadata item(s)"
+    return "; ".join(parts)
+
+
+def _render_blackbird_results(results: object, console: Console, *, kind: str) -> None:
     if not isinstance(results, list):
         return
     if not results:
-        console.print("[dim]No accounts found.[/dim]")
+        console.print(f"[dim]No {kind} matches found.[/dim]")
         return
-    table = Table(title=f"Username OSINT results ({len(results)})")
+    table = Table(title=f"Blackbird {kind} results ({len(results)})")
     table.add_column("#", justify="right")
     table.add_column("Site")
     table.add_column("Status")
+    table.add_column("Category")
+    table.add_column("Details")
     table.add_column("URL")
     for index, result in enumerate(results, 1):
         if not isinstance(result, dict):
-            table.add_row(str(index), "unknown", "unknown", str(result))
+            table.add_row(str(index), "unknown", "unknown", "", "", str(result))
             continue
-        url = str(result.get("url", ""))
-        host = urlparse(url).netloc or "unknown"
-        status = str(result.get("status", "found" if result.get("found") else "unknown"))
-        table.add_row(str(index), host, status, url)
+        url = _safe_text(result.get("url")).strip()
+        site = _safe_text(result.get("site")).strip() or urlparse(url).netloc or "unknown"
+        status = _safe_text(result.get("status")).strip() or "unknown"
+        category = _safe_text(result.get("category")).strip()
+        metadata = _format_blackbird_metadata(result.get("metadata"))
+        table.add_row(str(index), site, status, category, metadata, url)
     console.print(table)
 
 
@@ -280,7 +335,9 @@ def render_chat_result(
         if chat is not None:
             _prompt_search_download(result, chat, console)
     if result.action is not None and result.action.action == "username_osint" and result.tool_result:
-        _render_username_results(result.tool_result.data, console)
+        _render_blackbird_results(result.tool_result.data, console, kind="username")
+    if result.action is not None and result.action.action == "email_osint" and result.tool_result:
+        _render_blackbird_results(result.tool_result.data, console, kind="email")
     if result.action is not None and result.action.action == "reverse_image_search" and result.tool_result:
         _render_reverse_image_results(result.tool_result.data, console)
     if result.assistant_text:
@@ -305,7 +362,8 @@ def interactive_chat() -> None:
             ToolRegistry(
                 confirmation,
                 reverse_image_tool=SmartImageAdapter(),
-                username_osint_tool=TookieAdapter(),
+                username_osint_tool=BlackbirdAdapter(),
+                email_osint_tool=BlackbirdAdapter(),
                 reverse_image_resolver=lambda: select_project_image(console),
             ),
         )

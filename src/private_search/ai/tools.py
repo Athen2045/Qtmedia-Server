@@ -45,6 +45,7 @@ class ToolRegistry:
         download_tool: ToolAdapter | None = None,
         reverse_image_tool: ToolAdapter | None = None,
         username_osint_tool: ToolAdapter | None = None,
+        email_osint_tool: ToolAdapter | None = None,
         describe_image_tool: ToolAdapter | None = None,
         reverse_image_resolver: Callable[[], str | None] | None = None,
     ) -> None:
@@ -55,6 +56,7 @@ class ToolRegistry:
             "download_media": download_tool or self._default_download,
             "reverse_image_search": reverse_image_tool,
             "username_osint": username_osint_tool,
+            "email_osint": email_osint_tool,
             "describe_image": describe_image_tool,
         }
 
@@ -120,6 +122,9 @@ class ToolRegistry:
         elif action.action == "username_osint":
             count = len(data) if isinstance(data, list) else 0
             message = f"Found {count} username result(s)."
+        elif action.action == "email_osint":
+            count = len(data) if isinstance(data, list) else 0
+            message = f"Found {count} email result(s)."
         else:
             message = f"{action.action} completed."
         return ToolResult(action=action.action, ok=True, message=message, data=data)
@@ -174,6 +179,12 @@ class ToolRegistry:
                 action.action,
                 "Probe configured sites for a username",
                 (("Username", action.username or ""),),
+            )
+        if action.action == "email_osint":
+            return ConfirmationRequest(
+                action.action,
+                "Probe configured sites for an email address",
+                (("Email", action.email or ""),),
             )
         if action.action == "describe_image":
             return ConfirmationRequest(

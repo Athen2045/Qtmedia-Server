@@ -11,6 +11,7 @@ from private_search.ai.tools import ToolResult
 from private_search.app.chat_ui import (
     LocalCommand,
     execute_local_command,
+    interactive_chat,
     parse_local_command,
     render_chat_result,
     select_project_image,
@@ -272,3 +273,126 @@ def test_reverse_image_results_render_as_a_table():
     assert "Reverse-image results (1)" in output
     assert "Example #1" in output
     assert "https://example.test/result" in output
+
+
+def test_blackbird_username_results_render_normalized_records():
+    result = ChatTurnResult(
+        user_text="Check username alice",
+        action=AgentAction(
+            action="username_osint",
+            reason="The user requested username OSINT.",
+            username="alice",
+        ),
+        tool_result=ToolResult(
+            "username_osint",
+            True,
+            "Found 1 username result(s).",
+            data=[
+                {
+                    "source": "blackbird",
+                    "kind": "username",
+                    "site": "GitHub",
+                    "url": "https://github.com/alice",
+                    "status": "FOUND",
+                    "category": "social",
+                    "metadata": ["profile"],
+                }
+            ],
+        ),
+        assistant_text="Found 1 username result(s).",
+    )
+    console = Console(record=True, width=120)
+
+    render_chat_result(result, console)
+
+    output = console.export_text()
+    assert "Blackbird username results (1)" in output
+    assert "GitHub" in output
+    assert "FOUND" in output
+    assert "https://github.com/alice" in output
+
+
+def test_blackbird_email_results_render_normalized_records_safely():
+    result = ChatTurnResult(
+        user_text="Check alice@example.com",
+        action=AgentAction(
+            action="email_osint",
+            reason="The user requested email OSINT.",
+            email="alice@example.com",
+        ),
+        tool_result=ToolResult(
+            "email_osint",
+            True,
+            "Found 1 email result(s).",
+            data=[
+                {
+                    "source": "blackbird",
+                    "kind": "email",
+                    "site": "Example",
+                    "url": "https://example.test/alice",
+                    "status": "UNKNOWN",
+                    "category": None,
+                    "metadata": [{"label": "breach"}, "alias"],
+                }
+            ],
+        ),
+        assistant_text="Found 1 email result(s).",
+    )
+    console = Console(record=True, width=120)
+
+    render_chat_result(result, console)
+
+    output = console.export_text()
+    assert "Blackbird email results (1)" in output
+    assert "Example" in output
+    assert "UNKNOWN" in output
+    assert "https://example.test/alice" in output
+
+
+def test_interactive_chat_wires_blackbird_for_username_and_email(monkeypatch):
+    events: list[tuple[str, object]] = []
+
+    class FakeServer:
+        def __init__(self, settings):
+            events.append(("server_init", settings))
+            self.server_url = "http://127.0.0.1:8080"
+
+        def start(self):
+            events.append(("server_start", None))
+
+        def stop(self):
+            events.append(("server_stop", None))
+
+    class FakeBlackbirdAdapter:
+        def __init__(self):
+            events.append(("blackbird_adapter", self))
+
+    class FakeSmartImageAdapter:
+        def __init__(self):
+            events.append(("smartimage_adapter", self))
+
+    class FakeToolRegistry:
+        def __init__(self, confirmation, **kwargs):
+            events.append(("tool_registry", kwargs))
+
+    class FakeChatOrchestrator:
+        def __init__(self, client, registry):
+            events.append(("chat_init", registry))
+
+    monkeypatch.setattr("private_search.app.chat_ui.RuntimeSettings.from_environment", lambda: object())
+    monkeypatch.setattr("private_search.app.chat_ui.LlamaServer", FakeServer)
+    monkeypatch.setattr("private_search.app.chat_ui.LlamaClient", lambda server_url: ("client", server_url))
+    monkeypatch.setattr("private_search.app.chat_ui.SmartImageAdapter", FakeSmartImageAdapter)
+    monkeypatch.setattr("private_search.app.chat_ui.BlackbirdAdapter", FakeBlackbirdAdapter)
+    monkeypatch.setattr("private_search.app.chat_ui.ToolRegistry", FakeToolRegistry)
+    monkeypatch.setattr("private_search.app.chat_ui.ChatOrchestrator", FakeChatOrchestrator)
+    monkeypatch.setattr("private_search.app.chat_ui.Prompt.ask", lambda *args, **kwargs: "/quit")
+
+    interactive_chat()
+
+    registry_kwargs = next(value for key, value in events if key == "tool_registry")
+    assert isinstance(registry_kwargs["reverse_image_tool"], FakeSmartImageAdapter)
+    assert isinstance(registry_kwargs["username_osint_tool"], FakeBlackbirdAdapter)
+    assert isinstance(registry_kwargs["email_osint_tool"], FakeBlackbirdAdapter)
+    assert callable(registry_kwargs["reverse_image_resolver"])
+    assert ("server_stop", None) in events

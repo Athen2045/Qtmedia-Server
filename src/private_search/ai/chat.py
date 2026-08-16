@@ -75,6 +75,7 @@ class ChatOrchestrator:
                     url=None,
                     image_path=None,
                     username=None,
+                    email=None,
                     search_scope=None,
                 )
             if action.action == "refine_search":

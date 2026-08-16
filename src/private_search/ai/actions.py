@@ -19,6 +19,7 @@ ALLOWED_ACTIONS = frozenset(
         "download_media",
         "reverse_image_search",
         "username_osint",
+        "email_osint",
         "describe_image",
     }
 )
@@ -39,7 +40,7 @@ framing toward the user. Never sexualize minors, coercion, exploitation, or
 non-consensual activity. Never reveal hidden chain-of-thought.
 Return exactly one JSON object and no Markdown. Never return shell commands.
 Use only these actions: respond, refine_search, download_media,
-reverse_image_search, username_osint, describe_image.
+reverse_image_search, username_osint, email_osint, describe_image.
 For a search request, always use refine_search with a non-empty query and
 brief. Do not invent filters, exclusions, view thresholds, site names, or
 source/type expressions. The application selects search sources from words
@@ -50,11 +51,13 @@ For a supplied http or https media URL, use download_media. For a request to
 reverse-search an image, use reverse_image_search and leave image_path null if
 the application must pick from the project image folder. do not invent paths.
 For an explicit username lookup, use username_osint with username. For
+an explicit email lookup, use email_osint with email. For
 describing a local image, use describe_image with image_path.
 Always include every JSON field listed in the schema. Use null for an
 irrelevant scalar field.
 The application will validate your object and ask the user for confirmation
-before any download, external search, reverse image search, or username OSINT.
+before any download, external search, reverse image search, username OSINT,
+or email OSINT.
 """
 
 ACTION_JSON_SCHEMA = {
@@ -68,6 +71,7 @@ ACTION_JSON_SCHEMA = {
         "url",
         "image_path",
         "username",
+        "email",
         "brief",
     ],
     "properties": {
@@ -78,6 +82,7 @@ ACTION_JSON_SCHEMA = {
         "url": {"type": ["string", "null"]},
         "image_path": {"type": ["string", "null"]},
         "username": {"type": ["string", "null"]},
+        "email": {"type": ["string", "null"]},
         "brief": {"type": "boolean"},
     },
 }
@@ -97,6 +102,7 @@ class AgentAction:
     url: str | None = None
     image_path: str | None = None
     username: str | None = None
+    email: str | None = None
     # Filled deterministically from the user's original search wording, not
     # from model output. This keeps source selection outside the tool protocol.
     search_scope: str | None = None
@@ -167,6 +173,7 @@ def parse_action(raw_text: str) -> AgentAction:
     query = _clean_text(payload.get("query"), "query")
     image_path = _clean_text(payload.get("image_path"), "image_path")
     username = _clean_text(payload.get("username"), "username")
+    email = _clean_text(payload.get("email"), "email")
     url = _clean_http_url(payload.get("url")) if payload.get("url") is not None else None
 
     if action == "respond" and message is None:
@@ -179,6 +186,8 @@ def parse_action(raw_text: str) -> AgentAction:
         raise ActionValidationError(f"image_path is required for {action}")
     if action == "username_osint" and username is None:
         raise ActionValidationError("username is required for username_osint")
+    if action == "email_osint" and email is None:
+        raise ActionValidationError("email is required for email_osint")
 
     return AgentAction(
         action=action,
@@ -188,5 +197,6 @@ def parse_action(raw_text: str) -> AgentAction:
         url=url,
         image_path=image_path,
         username=username,
+        email=email,
         brief=brief,
     )

@@ -21,9 +21,11 @@ def encode(payload: dict) -> str:
 def test_action_prompt_maps_search_requests_to_refine_search():
     assert "search request" in ACTION_SYSTEM_PROMPT
     assert "refine_search" in ACTION_SYSTEM_PROMPT
+    assert "email_osint" in ACTION_SYSTEM_PROMPT
     assert "respond action" in ACTION_SYSTEM_PROMPT
     assert "project image folder" in ACTION_SYSTEM_PROMPT
     assert "do not invent paths" in ACTION_SYSTEM_PROMPT
+    assert "explicit email lookup" in ACTION_SYSTEM_PROMPT
     assert "Theia" in ACTION_SYSTEM_PROMPT
     assert "sharp, cheeky" in ACTION_SYSTEM_PROMPT
     assert "economical with words" in ACTION_SYSTEM_PROMPT
@@ -42,6 +44,7 @@ def test_action_schema_requires_the_complete_canonical_object():
         "url",
         "image_path",
         "username",
+        "email",
         "brief",
     }
     assert "filters" not in ACTION_JSON_SCHEMA["properties"]
@@ -96,6 +99,23 @@ def test_parse_reverse_image_search_allows_missing_image_path_for_resolution():
 
     assert action.action == "reverse_image_search"
     assert action.image_path is None
+
+
+def test_parse_email_osint_action_requires_only_the_email_field():
+    action = parse_action(
+        encode(
+            {
+                "action": "email_osint",
+                "reason": "The user explicitly asked for an email lookup.",
+                "email": "alice@example.com",
+                "brief": False,
+            }
+        )
+    )
+
+    assert action.action == "email_osint"
+    assert action.email == "alice@example.com"
+    assert action.username is None
 
 
 @pytest.mark.parametrize(
@@ -160,6 +180,7 @@ def test_parse_action_accepts_fenced_json():
             {"action": "describe_image", "reason": "missing image path"},
             "image_path",
         ),
+        ({"action": "email_osint", "reason": "missing email"}, "email"),
     ],
 )
 def test_parse_action_rejects_invalid_or_unsafe_payloads(payload: dict, error: str):
