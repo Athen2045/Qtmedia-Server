@@ -43,19 +43,12 @@ function Assert-Python311OrNewer {
 
     $versionScript = @"
 import sys
-major, minor = sys.version_info[:2]
-print(f"{major}.{minor}")
-sys.exit(0 if (major, minor) >= (3, 11) else 1)
+sys.exit(0 if sys.version_info >= (3, 11) else 1)
 "@
 
-    $versionOutput = & $Launcher.Command @($Launcher.Arguments + @("-c", $versionScript))
+    & $Launcher.Command @($Launcher.Arguments + @("-c", $versionScript)) | Out-Null
     if ($LASTEXITCODE -ne 0) {
-        $versionText = (($versionOutput | Out-String).Trim())
-        if (-not $versionText) {
-            $versionText = "unknown"
-        }
-
-        throw "Python 3.11+ is required for Blackbird setup. Selected interpreter version: $versionText"
+        throw "Python 3.11+ is required for Blackbird setup."
     }
 }
 
