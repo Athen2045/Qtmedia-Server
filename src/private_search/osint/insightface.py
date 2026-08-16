@@ -117,7 +117,7 @@ class InsightFaceAdapter:
         image = Path(image_path).expanduser().resolve()
         payload = self._analyze_image(image, operation="reverse")
         results: list[dict[str, object]] = []
-        crop_paths = [Path(str(path)).expanduser().resolve() for path in payload.get("crops", [])]
+        crop_paths = self._collect_crop_paths(payload)
 
         try:
             results.extend(self._local_results(payload))
@@ -146,7 +146,7 @@ class InsightFaceAdapter:
             source_root if not existing_pythonpath else os.pathsep.join((source_root, existing_pythonpath))
         )
         response = run_json_worker(
-            [str(self.settings.python.expanduser().resolve()), str(Path(__file__).with_name("insightface_worker.py"))],
+            self._worker_command(),
             request,
             cwd=config.PROJECT_ROOT,
             timeout_seconds=self.settings.timeout_seconds,
@@ -155,6 +155,13 @@ class InsightFaceAdapter:
         if not isinstance(response, dict):
             raise TypeError("InsightFace worker returned an invalid response")
         return response
+
+    def _worker_command(self) -> list[str]:
+        return [
+            str(self.settings.python.expanduser().resolve()),
+            "-m",
+            "private_search.osint.insightface_worker",
+        ]
 
     @staticmethod
     def _local_results(payload: dict[str, object]) -> list[dict[str, object]]:
@@ -222,6 +229,30 @@ class InsightFaceAdapter:
                 crop_path.unlink(missing_ok=True)
             except OSError:
                 continue
+
+    @staticmethod
+    def _collect_crop_paths(payload: dict[str, object]) -> list[Path]:
+        paths: list[Path] = []
+        seen: set[Path] = set()
+
+        def remember(value: object) -> None:
+            if not isinstance(value, str) or not value.strip():
+                return
+            resolved = Path(value).expanduser().resolve()
+            if resolved in seen:
+                return
+            seen.add(resolved)
+            paths.append(resolved)
+
+        for value in payload.get("crops", []):
+            remember(value)
+        for face in payload.get("faces", []):
+            if isinstance(face, dict):
+                remember(face.get("crop_path"))
+        for match in payload.get("local_matches", []):
+            if isinstance(match, dict):
+                remember(match.get("crop_path"))
+        return paths
 
 
 def _int_or_none(value: object) -> int | None:

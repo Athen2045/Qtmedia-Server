@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from private_search.osint.insightface import InsightFaceAdapter, InsightFaceSettings
@@ -128,3 +129,113 @@ def test_face_assisted_search_merges_filters_deduplicates_and_cleans_crops(
     assert results[2]["face_number"] == 1
     assert not crop_one.exists()
     assert not crop_two.exists()
+
+
+def test_face_assisted_search_cleans_every_returned_crop_reference(monkeypatch, tmp_path: Path):
+    image = tmp_path / "query.jpg"
+    crop_one = tmp_path / "face-1.jpg"
+    crop_two = tmp_path / "face-2.jpg"
+    crop_three = tmp_path / "face-3.jpg"
+    for path in (image, crop_one, crop_two, crop_three):
+        path.write_bytes(b"image")
+
+    adapter = InsightFaceAdapter(
+        InsightFaceSettings(
+            root=tmp_path / "insightface",
+            python=tmp_path / "python.exe",
+            image_root=tmp_path,
+            index_path=tmp_path / "face-index.sqlite",
+            crop_root=tmp_path,
+            keep_crops=False,
+        )
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_analyze_image",
+        lambda image_path, *, operation="reverse": {
+            "provider": "CPUExecutionProvider",
+            "model_version": "9.9.9:buffalo_l",
+            "faces": [
+                {"face_number": 1, "crop_path": str(crop_one)},
+                {"face_number": 2, "crop_path": str(crop_two)},
+            ],
+            "local_matches": [
+                {
+                    "face_number": 1,
+                    "image_path": str((tmp_path / "library-a.jpg").resolve()),
+                    "face_id": "match-a",
+                    "match_face_number": 1,
+                    "score": 0.92,
+                    "crop_path": str(crop_three),
+                }
+            ],
+            "crops": [str(crop_one)],
+        },
+    )
+
+    adapter.analyze_and_search(
+        image,
+        smartimage=FakeSmartImage(
+            {
+                image.resolve(): [],
+                crop_one.resolve(): [],
+                crop_two.resolve(): [],
+            }
+        ),
+    )
+
+    assert not crop_one.exists()
+    assert not crop_two.exists()
+    assert not crop_three.exists()
+
+
+def test_insightface_adapter_builds_module_worker_launch_command(monkeypatch, tmp_path: Path):
+    root = tmp_path / "insightface"
+    root.mkdir()
+    python = tmp_path / "python.exe"
+    python.write_text("", encoding="utf-8")
+    image = tmp_path / "images" / "query.jpg"
+    image.parent.mkdir()
+    image.write_bytes(b"image")
+    requests: list[tuple[list[str], dict[str, object], Path, int, dict[str, str] | None]] = []
+
+    def fake_run_json_worker(command, request, *, cwd, timeout_seconds, env=None):
+        requests.append((list(command), dict(request), cwd, timeout_seconds, dict(env) if env else None))
+        return {
+            "provider": "CUDAExecutionProvider",
+            "model_version": "9.9.9:buffalo_l",
+            "faces": [],
+            "local_matches": [],
+            "crops": [],
+        }
+
+    monkeypatch.setattr("private_search.osint.insightface.run_json_worker", fake_run_json_worker)
+    adapter = InsightFaceAdapter(
+        InsightFaceSettings(
+            root=root,
+            python=python,
+            model_name="buffalo_l",
+            image_root=image.parent,
+            index_path=tmp_path / "face-index.sqlite",
+            crop_root=tmp_path / "crops",
+            timeout_seconds=9,
+        )
+    )
+
+    adapter._analyze_image(image, operation="reverse")
+
+    assert len(requests) == 1
+    command, request, cwd, timeout_seconds, env = requests[0]
+    assert command == [
+        str(python.resolve()),
+        "-m",
+        "private_search.osint.insightface_worker",
+    ]
+    assert request["operation"] == "reverse"
+    assert cwd.is_dir()
+    assert timeout_seconds == 9
+    assert env is not None
+    pythonpath = env.get("PYTHONPATH", "")
+    expected_source_root = str((cwd / "src").resolve())
+    assert pythonpath
+    assert pythonpath.split(os.pathsep)[0] == expected_source_root
