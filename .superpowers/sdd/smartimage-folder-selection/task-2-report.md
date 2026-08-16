@@ -14,7 +14,9 @@ Implemented Task 2 in the shared workspace using only the requested Task 2 files
 - `tests/test_chat.py`
 - `tests/test_tool_registry.py`
 
-I preserved unrelated dirty workspace changes and did not modify the Task 1 UI files.
+I preserved unrelated dirty workspace changes. The initial Task 2 commit did not
+modify the pre-existing UI files; the follow-up integration fix documented below
+updates the UI boundary that consumed the new Task 2 interface.
 
 ## TDD record
 
@@ -143,3 +145,44 @@ Intended commit contents:
 - this report file
 
 No unrelated dirty files included.
+
+## Follow-up integration fix
+
+The Task 2 review identified a real integration break: the interactive UI still
+called the removed `ChatOrchestrator.set_active_image()` and
+`clear_active_image()` methods, and it did not inject a resolver into
+`ToolRegistry`. That could fail on `/image` or `/clear-image` and left normal
+reverse-search requests without project-folder selection.
+
+The focused fix:
+
+- Added `select_project_image(console)` in `src/private_search/app/chat_ui.py`.
+- Recursively discovers supported images from `config.PROJECT_ROOT / "image"`.
+- Automatically selects the only candidate, prompts for a numbered choice when
+  multiple candidates exist, previews candidates through the existing Kitty
+  boundary, and returns `None` for empty/cancelled selection.
+- Injects the selector as `reverse_image_resolver` when constructing
+  `ToolRegistry`.
+- Removed `/image PATH`, `/clear-image`, their help entries, and their active-image
+  command handlers.
+- Updated `tests/test_chat_ui.py` to cover command removal and zero/one/many/
+  invalid/cancelled selection behavior.
+- Did not modify SmartImage subprocess code or upload behavior.
+
+Follow-up verification:
+
+```powershell
+.venv\Scripts\python.exe -m pytest -q tests/test_chat_ui.py tests/test_reverse_search_selection.py tests/test_agent_actions.py tests/test_chat.py tests/test_tool_registry.py
+```
+
+Result: `46 passed in 0.24s`
+
+```powershell
+.venv\Scripts\python.exe -m ruff check src tests main.py
+```
+
+Result: `All checks passed!`
+
+The follow-up commit contains only `src/private_search/app/chat_ui.py`,
+`tests/test_chat_ui.py`, and this report, in addition to the already committed
+Task 2 changes.
