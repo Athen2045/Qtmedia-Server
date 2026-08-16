@@ -10,6 +10,7 @@ from private_search.ai.chat import ChatTurnResult
 from private_search.ai.tools import ToolResult
 from private_search.app.chat_ui import (
     LocalCommand,
+    _format_blackbird_metadata,
     execute_local_command,
     interactive_chat,
     parse_local_command,
@@ -347,6 +348,18 @@ def test_blackbird_email_results_render_normalized_records_safely():
     assert "Example" in output
     assert "UNKNOWN" in output
     assert "https://example.test/alice" in output
+
+
+def test_blackbird_metadata_limits_rendered_items_for_strings_and_dicts():
+    metadata = [
+        "alias",
+        {"label": "country", "value": "US"},
+        {"label": "breach"},
+        "mirror",
+        {"value": "shadow"},
+    ]
+
+    assert _format_blackbird_metadata(metadata) == "alias; country: US; breach"
 
 
 def test_interactive_chat_wires_blackbird_for_username_and_email(monkeypatch):

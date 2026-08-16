@@ -1,0 +1,29 @@
+# Task 3 Fix Report
+
+- Date: 2026-08-16
+- Status: complete
+- Base commit: `c374bb5`
+- Review finding:
+  - `src/private_search/app/chat_ui.py` only enforced the three-item metadata cap on the fallback rendering path. String and dict entries used early `continue` branches, so five-item metadata lists could render more than three displayed items.
+- Changed files:
+  - `src/private_search/app/chat_ui.py`
+  - `tests/test_chat_ui.py`
+  - `.superpowers/sdd/blackbird-insightface-theia-integration/task-3-fix-report.md`
+- Regression coverage:
+  - Added `test_blackbird_metadata_limits_rendered_items_for_strings_and_dicts` in `tests/test_chat_ui.py`.
+  - Red run:
+    - Command: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_chat_ui.py -k "metadata_limits_rendered_items_for_strings_and_dicts" -q`
+    - Output: `FAILED tests/test_chat_ui.py::test_blackbird_metadata_limits_rendered_items_for_strings_and_dicts`
+    - Assertion showed the bugged output rendered `alias; country: US; breach; mirror; shadow` instead of stopping after the first three items.
+  - Green run:
+    - Command: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_chat_ui.py -k "metadata_limits_rendered_items_for_strings_and_dicts" -q`
+    - Output: `1 passed, 17 deselected in 0.19s`
+- Focused pytest:
+  - Command: `.\\.venv\\Scripts\\python.exe -m pytest tests/test_chat_ui.py -q`
+  - Output: `18 passed in 0.27s`
+- Ruff:
+  - Command: `.\\.venv\\Scripts\\python.exe -m ruff check src/private_search/app/chat_ui.py tests/test_chat_ui.py`
+  - Output: `All checks passed!`
+- Notes:
+  - The formatter now routes every supported metadata value type through the same append-and-cap path, preserving existing normalized username/email metadata rendering while limiting displayed items to three.
+  - The SDD ledger was not modified.

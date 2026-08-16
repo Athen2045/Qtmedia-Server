@@ -195,28 +195,23 @@ def _format_blackbird_metadata(metadata: object) -> str:
         return ""
     parts: list[str] = []
     for item in metadata:
+        text = ""
         if isinstance(item, str):
             text = item.strip()
-            if text:
-                parts.append(text)
-            continue
-        if isinstance(item, dict):
+        elif isinstance(item, dict):
             label = _safe_text(item.get("label")).strip()
             value = _safe_text(item.get("value")).strip()
             if label and value:
-                parts.append(f"{label}: {value}")
-                continue
-            if label:
-                parts.append(label)
-                continue
-            if value:
-                parts.append(value)
-                continue
+                text = f"{label}: {value}"
+            elif label:
+                text = label
+            elif value:
+                text = value
         else:
             text = _safe_text(item).strip()
-            if text:
-                parts.append(text)
-        if len(parts) == 3:
+        if text:
+            parts.append(text)
+        if len(parts) >= 3:
             break
     if not parts:
         return f"{len(metadata)} metadata item(s)"
