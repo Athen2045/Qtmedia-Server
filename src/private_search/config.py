@@ -81,7 +81,13 @@ def _env_int(
     label: str,
 ) -> int:
     raw = _env_text(env, name)
-    value = default if not raw else int(raw)
+    if not raw:
+        value = default
+    else:
+        try:
+            value = int(raw)
+        except ValueError as exc:
+            raise ConfigurationError(f"{name} must be an integer value") from exc
     if value < minimum:
         raise ConfigurationError(f"{label} must be at least {minimum} second" if minimum == 1 and "timeout" in label.lower() else f"{label} must be at least {minimum}")
     return value

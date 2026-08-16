@@ -41,6 +41,16 @@ def test_blackbird_allows_environment_overrides() -> None:
     [
         ("PRIVATE_SEARCH_BLACKBIRD_TIMEOUT", "0", "at least 1 second"),
         ("PRIVATE_SEARCH_BLACKBIRD_THREADS", "0", "at least 1"),
+        (
+            "PRIVATE_SEARCH_BLACKBIRD_TIMEOUT",
+            "abc",
+            "PRIVATE_SEARCH_BLACKBIRD_TIMEOUT must be an integer value",
+        ),
+        (
+            "PRIVATE_SEARCH_BLACKBIRD_THREADS",
+            "two",
+            "PRIVATE_SEARCH_BLACKBIRD_THREADS must be an integer value",
+        ),
     ],
 )
 def test_blackbird_rejects_invalid_numeric_settings(
@@ -94,6 +104,11 @@ def test_insightface_allows_environment_overrides() -> None:
     ("name", "value", "message"),
     [
         ("PRIVATE_SEARCH_INSIGHTFACE_TIMEOUT", "0", "at least 1 second"),
+        (
+            "PRIVATE_SEARCH_INSIGHTFACE_TIMEOUT",
+            "abc",
+            "PRIVATE_SEARCH_INSIGHTFACE_TIMEOUT must be an integer value",
+        ),
         (
             "PRIVATE_SEARCH_INSIGHTFACE_PROVIDER_POLICY",
             "gpu",

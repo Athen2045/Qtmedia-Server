@@ -32,6 +32,30 @@ function Resolve-PythonLauncher {
     throw "Python 3.11+ was not found. Install Python, ensure 'py' or 'python' is on PATH, and rerun this script."
 }
 
+function Assert-Python311OrNewer {
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Launcher
+    )
+
+    $versionScript = @"
+import sys
+major, minor = sys.version_info[:2]
+print(f"{major}.{minor}")
+sys.exit(0 if (major, minor) >= (3, 11) else 1)
+"@
+
+    $versionOutput = & $Launcher.Command @($Launcher.Arguments + @("-c", $versionScript))
+    if ($LASTEXITCODE -ne 0) {
+        $versionText = (($versionOutput | Out-String).Trim())
+        if (-not $versionText) {
+            $versionText = "unknown"
+        }
+
+        throw "Python 3.11+ is required for Blackbird setup. Selected interpreter version: $versionText"
+    }
+}
+
 function Invoke-Python {
     param(
         [Parameter(Mandatory = $true)]
@@ -62,6 +86,7 @@ if ([System.StringComparer]::OrdinalIgnoreCase.Equals($targetVenv, $projectVenv)
 }
 
 $launcher = Resolve-PythonLauncher
+Assert-Python311OrNewer -Launcher $launcher
 
 Write-Host "Creating or updating Blackbird venv at $targetVenv"
 Invoke-Python -Launcher $launcher -Arguments @("-m", "venv", $targetVenv)

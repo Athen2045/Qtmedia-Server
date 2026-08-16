@@ -4,7 +4,7 @@ Date: 2026-08-16
 
 ## Status
 
-Complete.
+Complete with follow-up fixes from the Task 7 review.
 
 ## Changed files
 
@@ -14,9 +14,9 @@ Complete.
 - `scripts/setup_blackbird.ps1`
 - `scripts/setup_insightface.ps1`
 - `src/private_search/config.py`
-- `src/private_search/osint/blackbird.py`
-- `src/private_search/osint/insightface.py`
 - `tests/test_setup_config.py`
+- `task-7-report.md`
+- `task-7-fix-report.md`
 
 ## Notes
 
@@ -29,8 +29,12 @@ Complete.
 - Added repeatable PowerShell setup scripts for the isolated Blackbird and
   InsightFace environments. The InsightFace script installs the uploaded package
   without downloading model weights and pins `onnxruntime-gpu==1.27.0`.
-- Integrated user-facing setup, privacy, licensing, troubleshooting, and worker
-  boundary documentation into the existing README and architecture docs.
+- Follow-up review fix: both setup scripts now fail before environment creation
+  or package installation when the selected interpreter is older than Python
+  3.11.
+- Follow-up review fix: malformed numeric worker settings now raise
+  `ConfigurationError` with the environment variable name while keeping the
+  existing range validation.
 - Did not modify the SDD ledger.
 
 ## Verification
@@ -44,7 +48,7 @@ Required pytest:
 Output:
 
 ```text
-9 passed in 0.02s
+12 passed in 0.03s
 ```
 
 Required Ruff:
@@ -72,16 +76,14 @@ Result:
 No parse errors.
 ```
 
-Additional focused regression verification:
+Follow-up fix commit:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests/test_setup_config.py tests/test_blackbird.py tests/test_insightface.py -q
-.\.venv\Scripts\python.exe -m ruff check src/private_search/config.py src/private_search/osint/blackbird.py src/private_search/osint/insightface.py tests/test_setup_config.py
+fix: harden isolated setup validation
 ```
 
-Output:
+Commit hash:
 
 ```text
-25 passed in 0.68s
-All checks passed!
+Pending until committed.
 ```
