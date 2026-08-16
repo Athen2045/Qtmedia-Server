@@ -12,6 +12,30 @@ def _read_setup_script(name: str) -> str:
 
 
 @pytest.mark.parametrize(
+    "script_name",
+    [
+        "setup_blackbird.ps1",
+        "setup_insightface.ps1",
+    ],
+)
+def test_setup_scripts_skip_failed_native_python_launcher_probes(
+    script_name: str,
+) -> None:
+    script_text = _read_setup_script(script_name)
+
+    assert '& $candidate.Command @($candidate.Arguments + @("--version")) | Out-Null' in script_text
+
+    probe_index = script_text.index(
+        '& $candidate.Command @($candidate.Arguments + @("--version")) | Out-Null'
+    )
+    exit_check_index = script_text.index("if ($LASTEXITCODE -ne 0)", probe_index)
+    continue_index = script_text.index("continue", exit_check_index)
+    return_index = script_text.index("return $candidate", continue_index)
+
+    assert probe_index < exit_check_index < continue_index < return_index
+
+
+@pytest.mark.parametrize(
     ("script_name", "setup_name"),
     [
         ("setup_blackbird.ps1", "Blackbird"),

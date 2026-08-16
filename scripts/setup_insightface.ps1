@@ -24,6 +24,9 @@ function Resolve-PythonLauncher {
 
         try {
             & $candidate.Command @($candidate.Arguments + @("--version")) | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                continue
+            }
             return $candidate
         }
         catch {
