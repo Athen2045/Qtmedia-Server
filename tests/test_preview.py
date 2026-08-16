@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+from PIL import Image as PILImage
+
 from private_search.search import preview
 
 
@@ -125,3 +127,65 @@ def test_render_local_image_returns_false_and_deletes_temporary_png_on_failure(
     assert preview.render_local_image(tmp_path / "sample.png") is False
     assert created == []
     assert not temp_path.exists()
+
+
+def test_render_local_image_returns_false_on_decompression_bomb(
+    monkeypatch, tmp_path
+):
+    temp_path = tmp_path / "preview.png"
+    (tmp_path / "sample.png").write_bytes(b"image")
+
+    monkeypatch.setattr(preview, "is_kitty_terminal", lambda: True)
+    monkeypatch.setattr(
+        preview,
+        "tempfile",
+        SimpleNamespace(
+            NamedTemporaryFile=lambda **kwargs: _DummyTempFile(temp_path)
+        ),
+    )
+
+    def raise_decompression_bomb(path):
+        raise PILImage.DecompressionBombError("image too large")
+
+    monkeypatch.setattr(
+        preview,
+        "Image",
+        SimpleNamespace(open=raise_decompression_bomb),
+    )
+
+    assert preview.render_local_image(tmp_path / "sample.png") is False
+    assert not temp_path.exists()
+
+
+def test_render_local_image_returns_false_when_preview_cleanup_fails(
+    monkeypatch, tmp_path
+):
+    temp_path = tmp_path / "preview.png"
+    (tmp_path / "sample.png").write_bytes(b"image")
+
+    monkeypatch.setattr(preview, "is_kitty_terminal", lambda: True)
+    monkeypatch.setattr(
+        preview,
+        "tempfile",
+        SimpleNamespace(
+            NamedTemporaryFile=lambda **kwargs: _DummyTempFile(temp_path)
+        ),
+    )
+    monkeypatch.setattr(
+        preview,
+        "Image",
+        SimpleNamespace(open=lambda path: _FakeImage()),
+    )
+    monkeypatch.setattr(
+        preview,
+        "ImageOps",
+        SimpleNamespace(exif_transpose=lambda image: image),
+    )
+    monkeypatch.setattr(preview, "_write_kitty_png", lambda path: None)
+
+    def fail_unlink(path, *, missing_ok=False):
+        raise OSError("cleanup failed")
+
+    monkeypatch.setattr(preview.Path, "unlink", fail_unlink)
+
+    assert preview.render_local_image(tmp_path / "sample.png") is False

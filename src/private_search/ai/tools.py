@@ -130,12 +130,7 @@ class ToolRegistry:
         if action.image_path is not None:
             return action
         if self._reverse_image_resolver is None:
-            return ToolResult(
-                action=action.action,
-                ok=False,
-                message="Cancelled by user.",
-                cancelled=True,
-            )
+            return action
 
         selected_path = self._reverse_image_resolver()
         if selected_path is None:

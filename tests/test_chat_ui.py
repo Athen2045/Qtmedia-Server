@@ -110,6 +110,24 @@ def test_select_project_image_retries_invalid_choice_and_allows_cancel(
     assert "Choose a number" in console.export_text()
 
 
+def test_select_project_image_rejects_zero_and_negative_choices(monkeypatch, tmp_path):
+    first = tmp_path / "image" / "a.jpg"
+    second = tmp_path / "image" / "b.jpg"
+    first.parent.mkdir(parents=True)
+    first.write_bytes(b"a")
+    second.write_bytes(b"b")
+    monkeypatch.setattr("private_search.app.chat_ui.config.PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr("private_search.app.chat_ui.render_local_image", lambda path: False)
+    choices = iter(["0", "-1", "1"])
+    monkeypatch.setattr(
+        "private_search.app.chat_ui.Prompt.ask", lambda *args, **kwargs: next(choices)
+    )
+    console = Console(record=True)
+
+    assert select_project_image(console) == str(first.resolve())
+    assert console.export_text().count("Choose a number") == 2
+
+
 def test_select_project_image_cancels_on_empty_input(monkeypatch, tmp_path):
     first = tmp_path / "image" / "a.jpg"
     second = tmp_path / "image" / "b.jpg"

@@ -218,3 +218,17 @@ def test_reverse_image_search_without_tool_stays_unavailable():
 
     with pytest.raises(ToolUnavailableError, match="reverse_image_search"):
         registry.dispatch(action)
+
+
+def test_reverse_image_search_without_resolver_stays_unavailable_for_missing_path():
+    confirmation = RecordingConfirmation(approved=True)
+    registry = ToolRegistry(confirmation)
+    action = AgentAction(
+        action="reverse_image_search",
+        reason="The user requested reverse search.",
+    )
+
+    with pytest.raises(ToolUnavailableError, match="reverse_image_search"):
+        registry.dispatch(action)
+
+    assert confirmation.requests == []

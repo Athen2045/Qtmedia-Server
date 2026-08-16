@@ -92,6 +92,7 @@ def test_chat_orchestrator_forces_reverse_search_from_user_keywords():
             message="wrong action",
             query="wrong query",
             url="https://example.com/image",
+            image_path="C:/model-supplied.jpg",
             username="alice",
         )
     )
@@ -109,6 +110,7 @@ def test_chat_orchestrator_forces_reverse_search_from_user_keywords():
     assert result.action.message is None
     assert result.action.query is None
     assert result.action.url is None
+    assert result.action.image_path is None
     assert result.action.username is None
     assert messages[-1] == {"role": "user", "content": "Please reverse search this image"}
     assert kwargs["enable_thinking"] is False

@@ -19,6 +19,10 @@ except ImportError:  # pragma: no cover - dependency is declared in pyproject.to
     Image = None
     ImageOps = None
 
+LOCAL_IMAGE_PREVIEW_ERRORS = (OSError, ValueError)
+if Image is not None:
+    LOCAL_IMAGE_PREVIEW_ERRORS += (Image.DecompressionBombError,)
+
 THUMBNAIL_CACHE = CACHE_ROOT / "thumbnails"
 THUMBNAIL_TIMEOUT = 15
 MAX_THUMBNAIL_BYTES = 4 * 1024 * 1024
@@ -59,6 +63,7 @@ def render_local_image(path: Path) -> bool:
         return False
 
     preview_path: Path | None = None
+    cleanup_failed = False
     try:
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
             preview_path = Path(temp_file.name)
@@ -67,12 +72,15 @@ def render_local_image(path: Path) -> bool:
             image.thumbnail((PREVIEW_WIDTH_PIXELS, PREVIEW_HEIGHT_PIXELS))
             image.convert("RGBA").save(preview_path, format="PNG", optimize=True)
         _write_kitty_png(preview_path)
-    except (OSError, ValueError):
+    except LOCAL_IMAGE_PREVIEW_ERRORS:
         return False
     finally:
         if preview_path is not None:
-            preview_path.unlink(missing_ok=True)
-    return True
+            try:
+                preview_path.unlink(missing_ok=True)
+            except OSError:
+                cleanup_failed = True
+    return not cleanup_failed
 
 
 def _prepare_thumbnail(url: str) -> Path:

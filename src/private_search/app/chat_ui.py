@@ -91,6 +91,8 @@ def select_project_image(console: Console) -> str | None:
             return None
         try:
             index = int(choice)
+            if not 1 <= index <= len(candidates):
+                raise ValueError
             selected = candidates[index - 1]
         except (ValueError, IndexError):
             console.print(

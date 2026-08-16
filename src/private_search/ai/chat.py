@@ -73,6 +73,7 @@ class ChatOrchestrator:
                     message=None,
                     query=None,
                     url=None,
+                    image_path=None,
                     username=None,
                     search_scope=None,
                 )

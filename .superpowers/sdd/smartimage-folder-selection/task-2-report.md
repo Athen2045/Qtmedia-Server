@@ -186,3 +186,45 @@ Result: `All checks passed!`
 The follow-up commit contains only `src/private_search/app/chat_ui.py`,
 `tests/test_chat_ui.py`, and this report, in addition to the already committed
 Task 2 changes.
+
+## Final review fixes
+
+The final review identified four correctness gaps, all fixed in one focused
+follow-up change:
+
+1. Reverse/search keyword forcing now clears `image_path` as well as every other
+   unrelated scalar field, so model-supplied paths cannot bypass application
+   selection. A regression test supplies an arbitrary model path and asserts it
+   is discarded.
+2. Project-image picker input now requires `1 <= index <= len(candidates)`;
+   zero and negative values retry instead of using Python negative indexing.
+3. `render_local_image()` now treats Pillow decompression-bomb errors and
+   temporary-preview cleanup/unlink errors as non-fatal, returning `False` so
+   text selection continues. Tests use exception and cleanup doubles without
+   creating a huge image.
+4. A missing reverse-search path with no configured resolver now remains on the
+   normal adapter lookup path, preserving `ToolUnavailableError` rather than
+   reporting user cancellation.
+
+Verification for this fix:
+
+```powershell
+.venv\Scripts\python.exe -m pytest -q tests/test_reverse_search_selection.py tests/test_agent_actions.py tests/test_chat.py tests/test_tool_registry.py tests/test_chat_ui.py tests/test_preview.py
+```
+
+Result: `55 passed in 0.29s`
+
+```powershell
+.venv\Scripts\python.exe -m pytest -q
+```
+
+Result: `162 passed in 0.65s`
+
+```powershell
+.venv\Scripts\python.exe -m ruff check src tests main.py
+```
+
+Result: `All checks passed!`
+
+No live uploads or reverse searches were performed, and SmartImage subprocess
+behavior was not modified.
