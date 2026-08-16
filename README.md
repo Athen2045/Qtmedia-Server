@@ -8,7 +8,10 @@ video. Runtime data stays on the local machine.
 ## Features
 
 - Concurrent searches across the configured site adapters.
-- Include filtering and default exclusion of `ai`, `ai-generated`, and `vr`.
+- Keyword-based source routing: `porn` searches XHamster, XVideos, YouJizz,
+  SpankBang, TNAFlix, PMVHaven, and YouPorn; `youtube` searches YouTube.
+- The Rich chatbot does not let the model invent filters, exclusions, or view
+  thresholds; it searches the selected sources directly.
 - URL and title deduplication before and after yt-dlp inspection.
 - Persistent SQLite inspection cache to avoid reprocessing known URLs.
 - Progressive result display and interactive download selection.
@@ -58,13 +61,47 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
+### Optional OSINT worker setup
+
+Blackbird and InsightFace stay out of the main project environment. Their setup
+scripts create isolated worker virtual environments under `Update/blackbird/.venv`
+and `Update/insightface/.venv`.
+
+On Windows PowerShell:
+
+```powershell
+.\scripts\setup_blackbird.ps1
+.\scripts\setup_insightface.ps1
+```
+
+`setup_blackbird.ps1` installs the uploaded Blackbird requirements only. The
+application keeps Blackbird list updates disabled by default with
+`PRIVATE_SEARCH_BLACKBIRD_UPDATE_SITES=0`; enable updates only when you want to
+refresh its site list deliberately.
+
+`setup_insightface.ps1` installs the uploaded `python-package` into its own venv,
+pins `onnxruntime-gpu==1.27.0`, and reports whether
+`CUDAExecutionProvider` is available or whether the worker would run in explicit
+CPU degraded mode. The script does not download model weights.
+
+If you want InsightFace model weights later, do that as a separate explicit step.
+The uploaded package README states that the provided pretrained model packs are
+for non-commercial research use only. Manual placement is the safest option:
+unzip the licensed model pack under `~/.insightface/models/<model_name>/`.
+If you explicitly want the library's downloader, run it yourself from the
+InsightFace worker venv and expect a network download:
+
+```powershell
+.\Update\insightface\.venv\Scripts\python.exe -m insightface.commands.insightface_cli model.download buffalo_l
+```
+
 ## Usage
 
 After installing (`python -m pip install -e ".[dev]"`), the `qt` command is
 available:
 
 ```bash
-qt search "video title" --filter hd --exclude vr --min-views 1000
+qt search "video title"
 qt download https://example.com/video-page
 ```
 
@@ -128,19 +165,24 @@ private-search "video title"
 private-download https://example.com/video-page
 ```
 
-`main.bat` is the supported Windows launcher; it opens the interactive menu
-with the project virtual environment automatically, so activation is not
-required.
+`main.bat` is the supported Windows launcher; it opens the chatbot with the
+project virtual environment automatically, so activation is not required.
 
 Downloads are saved under `var/downloads/`. Enter `q` and press Return when
 prompted during a download to request cancellation; press `Ctrl+C` to
 interrupt the application.
 
 For sources that provide HLS or DASH fragments, downloads use four concurrent
-fragments by default. Adjust this conservatively with
+fragments by default, retry transient HTTP/fragment failures five times, and
+wait up to 60 seconds for a stalled socket. Adjust this conservatively with
 `PRIVATE_SEARCH_CONCURRENT_FRAGMENTS` (capped at 8). An optional
 `PRIVATE_SEARCH_HTTP_CHUNK_SIZE` such as `10M` enables yt-dlp HTTP chunking;
 leave it unset unless the source benefits from it.
+
+Slow or unstable CDNs can be given more time with
+`PRIVATE_SEARCH_DOWNLOAD_TIMEOUT`; `PRIVATE_SEARCH_DOWNLOAD_RETRIES` controls
+the bounded retry count. The project includes `curl-cffi` so yt-dlp can use
+browser impersonation where a site requires a browser-like TLS fingerprint.
 
 ## Search behavior
 
@@ -167,6 +209,8 @@ running separately.
 
 - `var/cache/search.sqlite3` stores inspection results.
 - `var/downloads/` stores downloaded media.
+- `var/face-index.sqlite` stores the local InsightFace embedding index.
+- `var/face-crops/` stores temporary or retained face crops.
 - `.env.example` documents optional environment settings.
 
 ### Local AI runtime
@@ -184,11 +228,24 @@ action-specific fields. The existing search and download commands remain
 unchanged. Side-effecting actions pass through a Rich confirmation service and
 fixed Python adapters. SmartImage Rdx is invoked as a separate process in
 non-interactive delimited-output mode after confirmation; its results are
-rendered in a terminal table. Tookie username OSINT is wired through an
-isolated subprocess, writes its JSON report in a temporary directory, and is
-still confirmation-gated. The model-to-tool orchestrator keeps bounded history.
+rendered in a terminal table. Blackbird username and email OSINT run in an
+isolated subprocess and stay confirmation-gated. The model-to-tool
+orchestrator keeps bounded history.
 
-### SmartImage Rdx reverse-image search
+### Blackbird username and email OSINT
+
+Blackbird replaces the old Tookie worker for username and email lookups. The
+Theia tool layer sends one explicit username or email into the isolated
+Blackbird worker, then renders normalized site hits back in chat after
+confirmation. The worker interpreter, root, timeout, thread count, and optional
+site-list refresh policy are controlled by `PRIVATE_SEARCH_BLACKBIRD_*`.
+
+Blackbird is networked OSINT, not an offline corpus. Results depend on the
+current state of the upstream sites and the packaged Blackbird list data. If
+you want to refresh the list data, set `PRIVATE_SEARCH_BLACKBIRD_UPDATE_SITES=1`
+for a deliberate run, then switch it back off for routine use.
+
+### SmartImage and InsightFace reverse-image search
 
 The setup builds and publishes only `Update/SmartImage-4/SmartImage.Rdx`, not
 the SmartImage GUI. The default published executable is
@@ -200,18 +257,31 @@ executable or timeout with `PRIVATE_SEARCH_SMARTIMAGE_RDX` and
 self-contained executable, the adapter automatically falls back to the
 framework-dependent Rdx build in `var/smartimage-rdx-host/`, launched by the
 local .NET host. Override that fallback with `PRIVATE_SEARCH_SMARTIMAGE_DOTNET`
-and `PRIVATE_SEARCH_SMARTIMAGE_DLL`. Catbox is the default upload service;
-explicitly choose `Litterbox`, `Pomf`, or `TmpFiles` with
+and `PRIVATE_SEARCH_SMARTIMAGE_DLL`. TmpFiles is the default upload service;
+it is temporary hosting and removes uploads after 60 minutes. You can choose
+`Litterbox`, `Pomf`, or `Catbox` with
 `PRIVATE_SEARCH_SMARTIMAGE_UPLOAD_ENGINE` if your network permits that service.
 
 Reverse-image search uploads the selected local image to SmartImage's enabled
 search engines, so Theia asks for confirmation before it runs. Results are
 untrusted matches, not proof of identity, ownership, or authorship.
 
-Tookie uses `Update/tookie-osint/.venv` automatically when that environment
-exists. To use a different installation, set `PRIVATE_SEARCH_TOOKIE_ROOT` and
-`PRIVATE_SEARCH_TOOKIE_PYTHON`. Its scan timeout and worker count are controlled
-by `PRIVATE_SEARCH_TOOKIE_TIMEOUT` and `PRIVATE_SEARCH_TOOKIE_THREADS`.
+InsightFace runs locally in its own worker process before SmartImage runs. It
+indexes supported files under the project `image/` folder, stores embeddings in
+`var/face-index.sqlite` by default, and writes aligned crops under
+`var/face-crops/`. Override the worker interpreter, roots, timeout, model,
+provider policy, image root, index path, crop path, and crop-retention behavior
+with `PRIVATE_SEARCH_INSIGHTFACE_*`.
+
+The combined reverse-image workflow is not fully offline. Face detection,
+embedding, and local index search stay on the local machine, but SmartImage and
+Blackbird are networked and remain confirmation-gated. Theia keeps one privacy
+checkpoint before any SmartImage upload, and the resulting local plus web
+matches are filtered to a 75% minimum confidence threshold before being shown.
+
+When you add or remove files under `image/`, the local face index is refreshed
+the next time InsightFace runs. The query image itself must stay inside that
+folder so the worker cannot be pointed at arbitrary paths outside the project.
 
 These paths are ignored by Git. Do not commit downloaded media, cookies,
 credentials, or cache databases.
@@ -242,6 +312,34 @@ updated `PATH` is loaded.
 **A site returns HTTP 403, 404, or a bot challenge.** Site layouts and access
 controls change independently of this project. The adapter reports the failure
 and the remaining configured sources continue when possible.
+
+**Blackbird does not start or reports a missing worker interpreter.** Run
+`.\scripts\setup_blackbird.ps1`, or point `PRIVATE_SEARCH_BLACKBIRD_PYTHON` at
+the isolated interpreter under `Update/blackbird/.venv/Scripts/python.exe`.
+
+**Blackbird results look stale.** The packaged worker keeps site-list updates
+disabled by default. Set `PRIVATE_SEARCH_BLACKBIRD_UPDATE_SITES=1` only for an
+intentional refresh run, then restore it to `0`.
+
+**InsightFace reports CPU degraded mode or no CUDA provider.** Rerun
+`.\scripts\setup_insightface.ps1` and check the provider output. The worker
+expects `onnxruntime-gpu==1.27.0`, a compatible NVIDIA driver, and matching CUDA
+or cuDNN runtime libraries on `PATH`. CPU fallback is allowed only when
+`PRIVATE_SEARCH_INSIGHTFACE_PROVIDER_POLICY=cpu` or `cuda_or_cpu`.
+
+**InsightFace asks for missing model files.** The setup script does not download
+weights. Manually place the licensed model pack under
+`~/.insightface/models/<model_name>/`, or run the documented explicit download
+command yourself if you accept the network transfer and the model license terms.
+
+**Reverse-image search misses newly added local photos.** Put supported files
+under the project `image/` folder and rerun the reverse-image workflow. The
+worker refreshes the local SQLite face index during that run.
+
+**Worker errors mention paths, timeouts, or unsupported images.** Confirm the
+`PRIVATE_SEARCH_BLACKBIRD_*` and `PRIVATE_SEARCH_INSIGHTFACE_*` variables point
+to existing files inside the expected roots. InsightFace only accepts supported
+image files that live under the configured image root.
 
 **Lustpress results are unavailable.** Confirm `LUSTPRESS_BASE_URL` is correct
 and that the service is reachable before starting the search interface.

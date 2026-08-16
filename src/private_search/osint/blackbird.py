@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import re
-import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,30 +19,6 @@ class BlackbirdExecutionError(RuntimeError):
     """Raised when Blackbird cannot be configured or complete a lookup."""
 
 
-def _default_python(root: Path) -> Path:
-    configured = os.environ.get("PRIVATE_SEARCH_BLACKBIRD_PYTHON", "").strip()
-    if configured:
-        return Path(configured).expanduser()
-    for candidate in (
-        root / ".venv" / "Scripts" / "python.exe",
-        root / "venv" / "Scripts" / "python.exe",
-    ):
-        if candidate.is_file():
-            return candidate
-    return Path(sys.executable)
-
-
-def _parse_bool(value: str, *, default: bool) -> bool:
-    text = value.strip().casefold()
-    if not text:
-        return default
-    if text in {"1", "true", "yes", "on"}:
-        return True
-    if text in {"0", "false", "no", "off"}:
-        return False
-    raise BlackbirdExecutionError(f"invalid Blackbird update policy: {value}")
-
-
 @dataclass(frozen=True)
 class BlackbirdSettings:
     """Runtime settings for the isolated Blackbird worker."""
@@ -56,25 +31,13 @@ class BlackbirdSettings:
 
     @classmethod
     def from_environment(cls) -> BlackbirdSettings:
-        configured_root = os.environ.get("PRIVATE_SEARCH_BLACKBIRD_ROOT", "").strip()
-        root = (
-            Path(configured_root).expanduser()
-            if configured_root
-            else config.PROJECT_ROOT / "Update" / "blackbird"
-        )
-        timeout = int(os.environ.get("PRIVATE_SEARCH_BLACKBIRD_TIMEOUT", "300"))
-        threads = int(os.environ.get("PRIVATE_SEARCH_BLACKBIRD_THREADS", "8"))
-        update_sites = _parse_bool(
-            os.environ.get("PRIVATE_SEARCH_BLACKBIRD_UPDATE_SITES", "1"),
-            default=True,
-        )
-        python = _default_python(root)
+        settings = config.BlackbirdRuntimeSettings.from_environment()
         return cls(
-            root=root,
-            python=python,
-            timeout_seconds=timeout,
-            threads=threads,
-            update_sites=update_sites,
+            root=settings.root,
+            python=settings.python,
+            timeout_seconds=settings.timeout_seconds,
+            threads=settings.threads,
+            update_sites=settings.update_sites,
         )
 
 

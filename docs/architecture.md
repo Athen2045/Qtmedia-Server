@@ -1,6 +1,6 @@
 # Architecture
 
-The repository has one interactive menu, two scriptable console commands, and
+The repository has one interactive AI chat shell, two scriptable console commands, and
 small modules organized by responsibility.
 
 ```text
@@ -9,9 +9,16 @@ main.bat / main.py / python -m private_search
         v
 src/private_search/
   app/
-    cli.py       interactive menu and Typer commands
+    cli.py       Typer commands and legacy workflows
+    chat_ui.py   Rich chatbot prompt and local commands
+  osint/
+    blackbird.py          isolated username/email worker adapter
+    insightface.py        local face-analysis adapter and SmartImage merge
+    insightface_worker.py JSON worker entry point for local embeddings/indexing
+    smartimage.py         confirmation-gated published Rdx runner
+    face_store.py         persistent SQLite embedding index
   search/
-    engine.py    concurrent retrieval, inspection, filters and ranking
+    engine.py    scoped concurrent retrieval, inspection and ranking
     quality.py   tokenization and relevance scoring
     preview.py   bounded Kitty thumbnail cache and renderer
   download/
@@ -22,12 +29,23 @@ src/private_search/
     lustpress.py / pmvhaven.py  site-specific adapters
   net/
     http_client.py              bounded HTTP transport
+  ai/
+    runtime.py                  loopback llama.cpp process lifecycle
+    client.py                   OpenAI-compatible local chat client
+    actions.py                  strict model action schema and validator
+    chat.py                     bounded model-to-tool orchestration
+    confirmation.py             Rich confirmation requests and decisions
+    tools.py                    confirmation-gated tool registry
   config.py                     stable runtime paths
         |
         v
 var/
   downloads/     downloaded media
   cache/         SQLite inspection cache
+  face-index.sqlite  local InsightFace embedding index
+  face-crops/    temporary or retained aligned face crops
+  models/        local model and vision-projector artifacts
+  runtime/       local llama.cpp binaries
 ```
 
 `main.bat` is the normal Windows entry point. New code should import the
@@ -40,6 +58,13 @@ adapter to change without changing the search pipeline.
 Runtime data is excluded from version control. This keeps repository locality
 focused on implementation and prevents media or cache state from entering a
 private GitHub repository accidentally.
+
+Blackbird and InsightFace are intentionally separate worker seams. The main
+application chooses the action, validates inputs, and keeps the confirmation
+policy, but the heavy or high-risk dependencies live in isolated worker Python
+environments under `Update/blackbird/.venv` and `Update/insightface/.venv`.
+That keeps the main application venv free of the OSINT worker dependency stacks
+and reduces the chance of launching those workers with the wrong interpreter.
 
 The optional local AI runtime is managed by `private_search.ai.runtime`. It
 defaults to the downloaded Qwen GGUF, its vision projector, and the bundled
@@ -68,6 +93,20 @@ SmartImage uploads remain confirmation-gated and are never triggered by the
 picker alone. The UI presents the assistant as Theia and exposes `/about` with
 the active model and safeguard summary; this persona layer does not grant the
 model shell, filesystem, or unrestricted tool access.
+
+Reverse-image search is a composite flow rather than one opaque tool call. The
+chat UI selects a local file from the project `image/` folder, InsightFace runs
+local face detection and embedding generation in the isolated worker, the
+worker refreshes and queries the local SQLite face index, and only then does
+the confirmed SmartImage adapter run web reverse-image searches for the
+original image and any aligned face crops. The merged result set is filtered by
+confidence before presentation.
+
+This means the feature is not fully offline. Face embeddings, crop generation,
+and local index refresh/search happen on the local machine, but SmartImage and
+Blackbird are networked lookups and remain confirmation-gated. Architecture and
+docs should describe that distinction explicitly so the privacy boundary stays
+clear.
 
 Chat searches derive their source scope from the user's original wording. The
 `porn` scope selects XHamster, XVideos, YouJizz, SpankBang, TNAFlix, PMVHaven,

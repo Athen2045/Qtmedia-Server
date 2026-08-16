@@ -16,47 +16,6 @@ if TYPE_CHECKING:
     from .smartimage import SmartImageAdapter
 
 
-def _default_root() -> Path:
-    configured = os.environ.get("PRIVATE_SEARCH_INSIGHTFACE_ROOT", "").strip()
-    if configured:
-        return Path(configured).expanduser()
-    return config.PROJECT_ROOT / "Update" / "insightface"
-
-
-def _default_python(root: Path) -> Path:
-    configured = os.environ.get("PRIVATE_SEARCH_INSIGHTFACE_PYTHON", "").strip()
-    if configured:
-        return Path(configured).expanduser()
-    return root / ".venv" / "Scripts" / "python.exe"
-
-
-def _default_image_root() -> Path:
-    configured = os.environ.get("PRIVATE_SEARCH_INSIGHTFACE_IMAGE_ROOT", "").strip()
-    if configured:
-        return Path(configured).expanduser()
-    return config.PROJECT_ROOT / "image"
-
-
-def _default_index_path() -> Path:
-    configured = os.environ.get("PRIVATE_SEARCH_INSIGHTFACE_INDEX_PATH", "").strip()
-    if configured:
-        return Path(configured).expanduser()
-    return config.FACE_INDEX_PATH
-
-
-def _default_crop_root() -> Path:
-    configured = os.environ.get("PRIVATE_SEARCH_INSIGHTFACE_CROP_ROOT", "").strip()
-    if configured:
-        return Path(configured).expanduser()
-    return config.FACE_CROP_ROOT
-
-
-def _parse_keep_crops(value: str | None) -> bool:
-    if value is None:
-        return False
-    return value.strip().casefold() in {"1", "true", "yes", "on"}
-
-
 @dataclass(frozen=True)
 class InsightFaceSettings:
     """Runtime settings for the isolated InsightFace worker."""
@@ -73,24 +32,17 @@ class InsightFaceSettings:
 
     @classmethod
     def from_environment(cls) -> InsightFaceSettings:
-        root = _default_root()
-        timeout = int(os.environ.get("PRIVATE_SEARCH_INSIGHTFACE_TIMEOUT", "300"))
-        model_name = os.environ.get("PRIVATE_SEARCH_INSIGHTFACE_MODEL", "buffalo_l").strip()
-        if not model_name:
-            model_name = "buffalo_l"
-        provider_policy = os.environ.get(
-            "PRIVATE_SEARCH_INSIGHTFACE_PROVIDER_POLICY", "cuda_or_cpu"
-        ).strip() or "cuda_or_cpu"
+        settings = config.InsightFaceRuntimeSettings.from_environment()
         return cls(
-            root=root,
-            python=_default_python(root),
-            model_name=model_name,
-            image_root=_default_image_root(),
-            index_path=_default_index_path(),
-            crop_root=_default_crop_root(),
-            timeout_seconds=timeout,
-            provider_policy=provider_policy,
-            keep_crops=_parse_keep_crops(os.environ.get("PRIVATE_SEARCH_INSIGHTFACE_KEEP_CROPS")),
+            root=settings.root,
+            python=settings.python,
+            model_name=settings.model_name,
+            image_root=settings.image_root,
+            index_path=settings.index_path,
+            crop_root=settings.crop_root,
+            timeout_seconds=settings.timeout_seconds,
+            provider_policy=settings.provider_policy,
+            keep_crops=settings.keep_crops,
         )
 
 
