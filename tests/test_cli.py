@@ -196,31 +196,6 @@ def test_no_prompt_skips_stdin(monkeypatch):
     assert result.exit_code == 0
 
 
-def test_interactive_menu_inspection_never_downloads(monkeypatch):
-    inspected = _make_result(title="Inspected only")
-    answers = iter(["3", "https://example.test/video", "", "q"])
-    inspected_urls = []
-
-    monkeypatch.setattr(cli.Prompt, "ask", lambda *args, **kwargs: next(answers))
-    monkeypatch.setattr(
-        cli.search,
-        "inspect_direct_url",
-        lambda url: inspected_urls.append(url) or inspected,
-    )
-    monkeypatch.setattr(cli, "_run_download", lambda url: (_ for _ in ()).throw(AssertionError(url)))
-
-    cli.interactive_menu()
-
-    assert inspected_urls == ["https://example.test/video"]
-
-
-def test_interactive_menu_returns_to_menu_after_invalid_choice(monkeypatch):
-    answers = iter(["invalid", "q"])
-    monkeypatch.setattr(cli.Prompt, "ask", lambda *args, **kwargs: next(answers))
-
-    cli.interactive_menu()
-
-
 def test_run_search_alias_forwards_argv_to_search_command(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["private-search", "some title", "--min-views", "5"])
     calls = []

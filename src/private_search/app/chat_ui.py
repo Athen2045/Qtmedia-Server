@@ -5,10 +5,19 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import ClassVar
 from urllib.parse import urlparse
 
 from rich.console import Console
 from rich.panel import Panel
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
 from rich.prompt import Prompt
 from rich.table import Table
 from rich.text import Text
@@ -27,6 +36,8 @@ from ..ai.runtime import (
 from ..ai.tools import ToolExecutionError, ToolRegistry, ToolUnavailableError
 from ..images import discover_images
 from ..osint import BlackbirdAdapter, FaceAssistedReverseImageAdapter
+from ..osint.confidence import confidence_band, normalize_score
+from ..progress import ProgressEvent
 from ..search.preview import render_local_image
 
 
@@ -34,6 +45,87 @@ from ..search.preview import render_local_image
 class LocalCommand:
     name: str
     argument: str = ""
+
+
+class RichOperationProgress:
+    """Render one tool operation as a staged, live-updating progress bar."""
+
+    _OPERATION_LABELS: ClassVar[dict[str, str]] = {
+        "Running a username search …": "Username",
+        "Running an email search …": "Email",
+        "Running a reverse image search …": "Reverse image",
+        "Running a search …": "Search",
+    }
+    _PHASE_STAGES: ClassVar[dict[str, int]] = {
+        "prepare": 0,
+        "connect": 1,
+        "upload": 1,
+        "detect": 1,
+        "scan": 2,
+        "match": 2,
+        "query": 2,
+        "rank": 3,
+        "process": 3,
+        "parse": 3,
+        "reverse": 3,
+        "complete": 4,
+    }
+
+    def __init__(self, console: Console, title: str) -> None:
+        self._console = console
+        self._title = title
+        self._operation_label = self._OPERATION_LABELS.get(title)
+        self._progress = Progress(
+            SpinnerColumn(),
+            TextColumn("{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeElapsedColumn(),
+            console=console,
+            transient=True,
+        )
+        self._task_id = None
+
+    def __enter__(self):
+        self._progress.start()
+        self._task_id = self._progress.add_task(self._title, total=1, completed=0)
+        return self.emit
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        if self._task_id is not None and exc_type is None:
+            task = self._progress.tasks[self._task_id]
+            self._progress.update(
+                self._task_id,
+                completed=task.total if task.total is not None else task.completed,
+            )
+        self._progress.stop()
+
+    def emit(self, event: ProgressEvent) -> None:
+        if self._task_id is None:
+            return
+        if event.total is not None:
+            total = max(1, event.total)
+            completed = max(0, min(event.completed or 0, total))
+        else:
+            total = 4
+            completed = self._PHASE_STAGES.get(event.phase, 0)
+        self._progress.update(
+            self._task_id,
+            total=total,
+            completed=completed,
+            description=(
+                f"{self._operation_label}: {event.message}"
+                if self._operation_label
+                else event.message
+            ),
+        )
+
+
+def _progress_factory(console: Console):
+    def create(title: str) -> RichOperationProgress:
+        return RichOperationProgress(console, title)
+
+    return create
 
 
 def _render_chat_message(
@@ -59,7 +151,7 @@ def parse_local_command(text: str) -> LocalCommand | None:
         return None
     name, _, argument = value[1:].partition(" ")
     name = name.casefold()
-    aliases = {"q": "quit", "exit": "quit", "h": "help"}
+    aliases = {"q": "quit", "exit": "quit", "h": "help", "think": "thinking"}
     return LocalCommand(aliases.get(name, name), argument.strip())
 
 
@@ -104,7 +196,11 @@ def select_project_image(console: Console) -> str | None:
         return str(selected.path.resolve())
 
 
-def execute_local_command(command: LocalCommand, chat: ChatOrchestrator, console: Console) -> bool:
+def execute_local_command(
+    command: LocalCommand,
+    console: Console,
+    chat: ChatOrchestrator | None = None,
+) -> bool:
     """Execute a local UI command and return whether the chat should continue."""
 
     if command.name == "quit":
@@ -113,9 +209,56 @@ def execute_local_command(command: LocalCommand, chat: ChatOrchestrator, console
         console.print(
             Panel(
                 "/about         Show Theia, model, and safeguards\n"
+                "/thinking on   Enable thinking for conversational answers\n"
+                "/thinking off  Disable thinking for conversational answers\n"
+                "/context       Show context used versus remaining\n"
+                "/options       Show current runtime options\n"
                 "/help          Show this help\n"
                 "/quit          Exit the chatbot",
                 title="Chat commands",
+                expand=False,
+            )
+        )
+        return True
+    if command.name == "thinking":
+        if chat is None:
+            console.print("[yellow]Thinking control is unavailable before chat starts.[/yellow]")
+            return True
+        value = command.argument.casefold()
+        if value in {"on", "enable", "enabled", "1", "true"}:
+            chat.set_thinking(True)
+        elif value in {"off", "disable", "disabled", "0", "false"}:
+            chat.set_thinking(False)
+        elif value:
+            console.print("[yellow]Use /thinking on or /thinking off.[/yellow]")
+            return True
+        state = "on" if chat.thinking_enabled else "off"
+        console.print(f"[cyan]Thinking mode:[/cyan] {state}")
+        return True
+    if command.name in {"context", "options"}:
+        if chat is None:
+            console.print("[yellow]Context information is unavailable before chat starts.[/yellow]")
+            return True
+        usage = chat.context_usage
+        source = "llama.cpp" if usage.exact else "estimated"
+        lines = [
+            f"Thinking: {'on' if chat.thinking_enabled else 'off'}",
+            f"Context used: {usage.used:,} / {usage.total:,} tokens",
+            f"Remaining: {usage.remaining:,} tokens",
+            f"Measurement: {source}",
+        ]
+        if command.name == "options":
+            lines.extend(
+                [
+                    "",
+                    "Change with /thinking on or /thinking off.",
+                    "Context size requires an application restart to change.",
+                ]
+            )
+        console.print(
+            Panel(
+                "\n".join(lines),
+                title="Runtime options" if command.name == "options" else "Context",
                 expand=False,
             )
         )
@@ -125,14 +268,17 @@ def execute_local_command(command: LocalCommand, chat: ChatOrchestrator, console
             Panel(
                 "Name: Theia\n"
                 "Personality: sharp, cheeky, concise, security-analyst mindset\n"
-                "Delivery: dry wit, no flirtation, no emojis, no filler\n"
+                "Delivery: dry wit, optional cussing, no flirtation, no emojis, no filler\n"
+                "Modes: casual conversation, coding, debugging, planning, analysis, and tools\n"
                 f"Model: {_configured_model_name()}\n\n"
                 "Application safeguards:\n"
-                "• The model returns a strict validated action schema.\n"
+                "• Tool requests use a strict validated action schema.\n"
                 "• It cannot create shell commands or select executables.\n"
                 "• Search, downloads, reverse-image, and username/email OSINT tools require confirmation.\n"
                 "• Tool access is through fixed Python adapters only.\n"
                 "• The model server is restricted to loopback.\n"
+                "• Casual/code replies use a free-form response lane; tool requests remain validated.\n"
+                "• Internal reasoning is not exposed as hidden chain-of-thought.\n"
                 "• No flirtation, suggestive, romantic, or adult-coded content.\n"
                 "• Hard floor: no minors, coercion, exploitation, or non-consensual activity.\n\n"
                 "Model safety note: the publisher markets this derivative as uncensored\n"
@@ -246,24 +392,51 @@ def _render_blackbird_results(results: object, console: Console, *, kind: str) -
 def _render_reverse_image_results(results: object, console: Console) -> None:
     if not isinstance(results, list):
         return
-    if not results:
+    face_detections = [
+        result for result in results if isinstance(result, dict) and result.get("kind") == "face_detection"
+    ]
+    search_errors = [
+        result for result in results if isinstance(result, dict) and result.get("kind") == "reverse_search_error"
+    ]
+    matches = [
+        result
+        for result in results
+        if not isinstance(result, dict)
+        or result.get("kind") not in {"face_detection", "reverse_search_error"}
+    ]
+    if face_detections:
+        details = []
+        for face in face_detections:
+            confidence = normalize_score(face.get("confidence"), source="confidence")
+            score = "n/a" if confidence is None else f"{confidence:.1f}% ({confidence_band(confidence)})"
+            details.append(f"{face.get('name', 'Face')}: {score}")
+        console.print("[cyan]InsightFace[/cyan] " + ", ".join(details))
+    for error in search_errors:
+        console.print(f"[yellow]SmartImage:[/yellow] {error.get('error', 'reverse search failed')}")
+    if not matches:
         console.print("[dim]No reverse-image matches found.[/dim]")
         return
-    table = Table(title=f"Reverse-image results ({len(results)})")
+    table = Table(title=f"Reverse-image results ({len(matches)})")
     table.add_column("#", justify="right")
     table.add_column("Name")
     table.add_column("Site")
-    table.add_column("Similarity")
+    table.add_column("Confidence")
     table.add_column("URL")
-    for index, result in enumerate(results, 1):
+    for index, result in enumerate(matches, 1):
         if not isinstance(result, dict):
             table.add_row(str(index), str(result), "unknown", "unknown", "")
             continue
+        confidence = normalize_score(result.get("confidence"), source="confidence")
+        if confidence is None:
+            confidence = normalize_score(result.get("similarity"), source="similarity")
+        confidence_text = "n/a"
+        if confidence is not None:
+            confidence_text = f"{confidence:.1f}% ({confidence_band(confidence)})"
         table.add_row(
             str(index),
             str(result.get("name", "")),
             str(result.get("site", "")),
-            str(result.get("similarity", "")),
+            confidence_text,
             str(result.get("url", "")),
         )
     console.print(table)
@@ -342,7 +515,7 @@ def interactive_chat() -> None:
     """Start the local model and run the Rich chatbot until the user exits."""
 
     console = Console()
-    console.rule("[bold]Private Search AI[/bold]")
+    console.rule("[bold]THEIA[/bold]")
     server: LlamaServer | None = None
     try:
         settings = RuntimeSettings.from_environment()
@@ -359,7 +532,9 @@ def interactive_chat() -> None:
                 username_osint_tool=BlackbirdAdapter(),
                 email_osint_tool=BlackbirdAdapter(),
                 reverse_image_resolver=lambda: select_project_image(console),
+                progress=_progress_factory(console),
             ),
+            context_window=settings.context_size,
         )
         console.print("[green]Local model ready.[/green] Type /help for commands or /quit to exit.")
         while True:
@@ -370,7 +545,7 @@ def interactive_chat() -> None:
                 break
             command = parse_local_command(text)
             if command is not None:
-                if not execute_local_command(command, chat, console):
+                if not execute_local_command(command, console, chat):
                     break
                 continue
             render_chat_result(chat.handle(text), console, chat=chat)

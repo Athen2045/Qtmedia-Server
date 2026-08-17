@@ -7,9 +7,10 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
-# Local runtime data
-var/downloads/
-var/cache/
+# Local runtime data, tool installations, and user inputs
+/var/
+/Update/
+/image/
 *.sqlite3
 *.db
 

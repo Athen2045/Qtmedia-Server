@@ -60,7 +60,7 @@ def fetch_metadata(url: str, session: requests.Session | None = None) -> PMVHave
     client = session or requests.Session()
     response = client.get(
         API_TEMPLATE.format(video_id=video_id),
-        headers={"User-Agent": "private-search/0.1"},
+        headers={"User-Agent": "theia/0.1"},
         timeout=REQUEST_TIMEOUT,
     )
     response.raise_for_status()

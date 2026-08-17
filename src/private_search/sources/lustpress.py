@@ -45,7 +45,7 @@ def search_site(site: str, query: str, page: int = 1) -> list[LustpressCandidate
     response = requests.get(
         urljoin(f"{LUSTPRESS_BASE_URL}/", f"{site}/search"),
         params={"key": query, "page": page},
-        headers={"Accept": "application/json", "User-Agent": "private-search/0.1"},
+        headers={"Accept": "application/json", "User-Agent": "theia/0.1"},
         timeout=REQUEST_TIMEOUT,
     )
     response.raise_for_status()

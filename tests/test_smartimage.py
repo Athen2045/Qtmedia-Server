@@ -28,28 +28,6 @@ def reverse_image_action(path: str) -> AgentAction:
     )
 
 
-def test_smartimage_rdx_search_command_has_headless_execution_path():
-    source = Path(
-        "Update/SmartImage-4/SmartImage.Rdx/Commands/Search/SearchCommand.cs"
-    ).read_text(encoding="utf-8")
-
-    assert "UseHeadlessExecution" in source
-    assert "!CommandSettings.Interactive" in source
-    assert "Console.IsOutputRedirected" in source
-    assert "Console.IsErrorRedirected" in source
-    assert "await InitQueryAsync();" in source
-    assert "await RunSearchAsync(null, m_ctsRunSearch.Token);" in source
-
-
-def test_smartimage_headless_rows_do_not_cast_lists_to_arrays():
-    source = Path(
-        "Update/SmartImage-4/SmartImage.Rdx/Commands/Search/SearchCommand.cs"
-    ).read_text(encoding="utf-8")
-
-    assert "var row = list.ToArray();" in source
-    assert "var row = (IRenderable[]) list;" not in source
-
-
 def test_smartimage_adapter_runs_non_interactive_delimited_search(
     monkeypatch, tmp_path: Path
 ):

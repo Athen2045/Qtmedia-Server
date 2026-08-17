@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Iterable
 
 from rapidfuzz import fuzz
 
@@ -59,8 +58,3 @@ def relevance_score(title: str, query: str) -> tuple[float, ...]:
     token_sort = fuzz.token_sort_ratio(normalized_query, normalized_title) / 100.0
     partial = fuzz.partial_ratio(normalized_query, normalized_title) / 100.0
     return (exact_title, exact_phrase, all_tokens, coverage, token_sort, partial)
-
-
-def rank_titles(titles: Iterable[str], query: str) -> list[str]:
-    """Return titles in relevance order, preserving input order for ties."""
-    return sorted(titles, key=lambda title: relevance_score(title, query), reverse=True)

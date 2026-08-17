@@ -71,7 +71,12 @@ function Invoke-Python {
 $scriptDir = Split-Path -Parent $PSCommandPath
 $projectRoot = (Resolve-Path (Join-Path $scriptDir "..")).Path
 $projectVenv = Join-Path $projectRoot ".venv"
-$insightfaceRoot = (Resolve-Path (Join-Path $projectRoot "Update\\insightface")).Path
+$configuredInsightFaceRoot = $env:PRIVATE_SEARCH_INSIGHTFACE_ROOT
+$insightfaceRoot = if ([string]::IsNullOrWhiteSpace($configuredInsightFaceRoot)) {
+    Join-Path $projectRoot "var\\tools\\insightface"
+} else {
+    [System.IO.Path]::GetFullPath($configuredInsightFaceRoot)
+}
 $packageRoot = (Resolve-Path (Join-Path $insightfaceRoot "python-package")).Path
 $targetVenv = Join-Path $insightfaceRoot ".venv"
 $venvPython = Join-Path $targetVenv "Scripts\\python.exe"
@@ -106,7 +111,21 @@ if ($LASTEXITCODE -gt 1) {
 }
 
 Write-Host "Installing InsightFace runtime dependencies with $OnnxRuntimeGpuSpec"
-& $venvPython -m pip install numpy onnx opencv-python tqdm requests scipy scikit-image $OnnxRuntimeGpuSpec
+$runtimePackages = @(
+    "numpy",
+    "onnx",
+    "opencv-python",
+    "tqdm",
+    "requests",
+    $OnnxRuntimeGpuSpec,
+    "nvidia-cuda-runtime==13.3.29",
+    "nvidia-cuda-nvrtc==13.3.33",
+    "nvidia-cublas==13.6.0.2",
+    "nvidia-cudnn-cu13==9.24.0.43",
+    "nvidia-cufft==12.3.0.29",
+    "nvidia-nvjitlink==13.3.33"
+)
+& $venvPython -m pip install @runtimePackages
 if ($LASTEXITCODE -ne 0) {
     throw "InsightFace dependency install failed."
 }
@@ -134,8 +153,18 @@ print("status=none")
 sys.exit(1)
 "@
 
-$providerOutput = & $venvPython -c $providerScript
-if ($LASTEXITCODE -ne 0) {
+$providerScriptPath = Join-Path ([System.IO.Path]::GetTempPath()) (
+    "private-search-onnx-provider-" + [Guid]::NewGuid().ToString("N") + ".py"
+)
+try {
+    Set-Content -LiteralPath $providerScriptPath -Value $providerScript -Encoding utf8
+    $providerOutput = & $venvPython $providerScriptPath
+    $providerExitCode = $LASTEXITCODE
+}
+finally {
+    Remove-Item -LiteralPath $providerScriptPath -Force -ErrorAction SilentlyContinue
+}
+if ($providerExitCode -ne 0) {
     throw "ONNX Runtime provider check failed. Output:`n$providerOutput"
 }
 

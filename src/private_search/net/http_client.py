@@ -16,6 +16,8 @@ import os
 import random
 import re
 import time
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 
 import requests
 
@@ -59,6 +61,7 @@ RETRY_BACKOFF_SECONDS = 1.5
 # failing site wakes on the same 1.5s/3.0s schedule and re-fires as one burst,
 # which is exactly the synchronised traffic pattern worth avoiding.
 RETRY_JITTER_SECONDS = 0.5
+MAX_RETRY_AFTER_SECONDS = 60.0
 
 # Search pages are read in bounded chunks rather than as one whole-body copy,
 # so a slow or oversized response is absorbed incrementally instead of forcing
@@ -121,6 +124,34 @@ def request_headers(extra: dict[str, str] | None = None) -> dict[str, str]:
     return headers
 
 
+def _retry_after_seconds(response) -> float | None:
+    """Return a bounded Retry-After delay when a server supplied one."""
+
+    headers = getattr(response, "headers", None)
+    if not headers:
+        return None
+    raw = headers.get("Retry-After")
+    if not raw:
+        return None
+    value = str(raw).strip()
+    try:
+        return max(0.0, min(float(value), MAX_RETRY_AFTER_SECONDS))
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(value)
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=UTC)
+            return max(
+                0.0,
+                min(
+                    (retry_at - datetime.now(UTC)).total_seconds(),
+                    MAX_RETRY_AFTER_SECONDS,
+                ),
+            )
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+
 def get(session, url: str, **kwargs):
     """GET with a few retries.
 
@@ -150,7 +181,10 @@ def get(session, url: str, **kwargs):
                 return response
             last_error = None
         if attempt < RETRY_ATTEMPTS - 1:
-            backoff = RETRY_BACKOFF_SECONDS * (attempt + 1)
+            retry_after = _retry_after_seconds(response)
+            backoff = RETRY_BACKOFF_SECONDS * (2**attempt)
+            if retry_after is not None:
+                backoff = max(backoff, retry_after)
             time.sleep(backoff + random.uniform(0, RETRY_JITTER_SECONDS))
     if response is not None:
         return response

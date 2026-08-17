@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..download import engine as downloader
+from ..progress import ProgressEvent
 from ..search import engine as search
 from .actions import AgentAction
 from .confirmation import ConfirmationRequest, ConfirmationService
@@ -32,6 +35,10 @@ class ToolResult:
 
 
 ToolAdapter = Callable[[AgentAction], object]
+StatusFactory = Callable[[str], AbstractContextManager[object]]
+ProgressFactory = Callable[
+    [str], AbstractContextManager[Callable[[ProgressEvent], None] | None]
+]
 
 
 class ToolRegistry:
@@ -48,9 +55,13 @@ class ToolRegistry:
         email_osint_tool: ToolAdapter | None = None,
         describe_image_tool: ToolAdapter | None = None,
         reverse_image_resolver: Callable[[], str | None] | None = None,
+        status: StatusFactory | None = None,
+        progress: ProgressFactory | None = None,
     ) -> None:
         self._confirmation = confirmation
         self._reverse_image_resolver = reverse_image_resolver
+        self._status = status
+        self._progress = progress
         self._adapters: dict[str, ToolAdapter | None] = {
             "refine_search": search_tool or self._default_search,
             "download_media": download_tool or self._default_download,
@@ -61,10 +72,23 @@ class ToolRegistry:
         }
 
     @staticmethod
-    def _default_search(action: AgentAction) -> object:
+    def _default_search(
+        action: AgentAction,
+        *,
+        progress: Callable[[ProgressEvent], None] | None = None,
+    ) -> object:
         if action.query is None:
             raise ToolExecutionError("search action has no query")
-        return search.search(action.query, source_scope=action.search_scope)
+        if progress is None:
+            return search.search(action.query, source_scope=action.search_scope)
+        progress(ProgressEvent("prepare", "Preparing", completed=0, total=3))
+        results = search.search(
+            action.query,
+            source_scope=action.search_scope,
+            progress=progress,
+        )
+        progress(ProgressEvent("complete", "Complete", completed=3, total=3))
+        return results
 
     @staticmethod
     def _default_download(action: AgentAction) -> object:
@@ -100,7 +124,16 @@ class ToolRegistry:
             )
 
         try:
-            data = adapter(action)
+            message = self._status_message(action.action)
+            if self._progress is not None:
+                with self._progress(message) as emit:
+                    data = self._invoke_adapter(adapter, action, emit)
+            else:
+                status_context = (
+                    self._status(message) if self._status is not None else nullcontext()
+                )
+                with status_context:
+                    data = adapter(action)
         except ToolExecutionError:
             raise
         except Exception as error:
@@ -117,7 +150,14 @@ class ToolRegistry:
             count = len(data) if isinstance(data, list) else 0
             message = f"Found {count} search result(s)."
         elif action.action == "reverse_image_search":
-            count = len(data) if isinstance(data, list) else 0
+            if isinstance(data, list) and any(isinstance(item, dict) and "kind" in item for item in data):
+                count = sum(
+                    1
+                    for item in data
+                    if isinstance(item, dict) and item.get("kind") in {"local_face", "web_reverse"}
+                )
+            else:
+                count = len(data) if isinstance(data, list) else 0
             message = f"Found {count} reverse-image result(s)."
         elif action.action == "username_osint":
             count = len(data) if isinstance(data, list) else 0
@@ -128,6 +168,46 @@ class ToolRegistry:
         else:
             message = f"{action.action} completed."
         return ToolResult(action=action.action, ok=True, message=message, data=data)
+
+    @staticmethod
+    def _invoke_adapter(
+        adapter: ToolAdapter,
+        action: AgentAction,
+        emit: Callable[[ProgressEvent], None] | None,
+    ) -> object:
+        """Pass progress only to adapters that explicitly support it.
+
+        Third-party or test adapters keep the original one-argument contract;
+        built-in streaming adapters opt in with a keyword-only ``progress``
+        parameter. Inspecting the signature avoids masking a real TypeError
+        raised inside an adapter.
+        """
+
+        if emit is None:
+            return adapter(action)
+        try:
+            parameters = inspect.signature(adapter).parameters.values()
+        except (TypeError, ValueError):
+            return adapter(action)
+        accepts_keyword = any(
+            parameter.name == "progress"
+            or parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters
+        )
+        if accepts_keyword:
+            return adapter(action, progress=emit)  # type: ignore[call-arg]
+        return adapter(action)
+
+    @staticmethod
+    def _status_message(action: str) -> str:
+        return {
+            "refine_search": "Running a search …",
+            "download_media": "Downloading media …",
+            "reverse_image_search": "Running a reverse image search …",
+            "username_osint": "Running a username search …",
+            "email_osint": "Running an email search …",
+            "describe_image": "Analyzing the image …",
+        }.get(action, f"Running {action} …")
 
     def _resolve_reverse_image_action(
         self, action: AgentAction

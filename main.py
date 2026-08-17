@@ -1,4 +1,4 @@
-"""Start the unified interactive terminal menu from a source checkout."""
+"""Start THEIA from a source checkout."""
 
 from __future__ import annotations
 
@@ -7,11 +7,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-from private_search.app.cli import interactive_menu
+from private_search.app.chat_ui import interactive_chat
 
 
 def main() -> None:
-    interactive_menu()
+    interactive_chat()
 
 
 if __name__ == "__main__":

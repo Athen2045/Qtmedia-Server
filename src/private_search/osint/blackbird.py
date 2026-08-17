@@ -5,12 +5,21 @@ from __future__ import annotations
 import os
 import re
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .. import config
-from ..ai.actions import AgentAction
-from .worker import WorkerExecutionError, run_json_worker
+from ..progress import ProgressEvent
+from .worker import (
+    WorkerExecutionError,
+    run_json_worker,
+    run_streaming_json_worker,
+)
+
+if TYPE_CHECKING:
+    from ..ai.actions import AgentAction
 
 _EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -26,6 +35,7 @@ class BlackbirdSettings:
     root: Path
     python: Path
     timeout_seconds: int = 300
+    request_timeout_seconds: int = 15
     threads: int = 8
     update_sites: bool = True
 
@@ -36,6 +46,7 @@ class BlackbirdSettings:
             root=settings.root,
             python=settings.python,
             timeout_seconds=settings.timeout_seconds,
+            request_timeout_seconds=settings.request_timeout_seconds,
             threads=settings.threads,
             update_sites=settings.update_sites,
         )
@@ -47,20 +58,29 @@ class BlackbirdAdapter:
     def __init__(self, settings: BlackbirdSettings | None = None) -> None:
         self.settings = settings or BlackbirdSettings.from_environment()
 
-    def __call__(self, action: AgentAction) -> list[dict[str, object]]:
+    def __call__(
+        self,
+        action: AgentAction,
+        *,
+        progress: Callable[[ProgressEvent], None] | None = None,
+    ) -> list[dict[str, object]]:
+        self._emit(progress, "prepare", "Preparing", completed=0, total=4)
         operation, value = self._resolve_action(action)
-        root = self.settings.root.expanduser().resolve()
-        worker = root / "theia_worker.py"
+        worker = config.BLACKBIRD_WORKER_PATH
         python = self.settings.python.expanduser().resolve()
         if not worker.is_file():
             raise BlackbirdExecutionError(f"Blackbird worker not found: {worker}")
         if not python.is_file():
             raise BlackbirdExecutionError(
                 f"Blackbird Python runtime not found: {python}. "
-                "Create Update/blackbird/.venv or set PRIVATE_SEARCH_BLACKBIRD_PYTHON."
+                "Create var/tools/blackbird/.venv or set PRIVATE_SEARCH_BLACKBIRD_PYTHON."
             )
         if self.settings.timeout_seconds < 1:
             raise BlackbirdExecutionError("Blackbird timeout must be at least 1 second")
+        if self.settings.request_timeout_seconds < 1:
+            raise BlackbirdExecutionError(
+                "Blackbird request timeout must be at least 1 second"
+            )
         if self.settings.threads < 1:
             raise BlackbirdExecutionError("Blackbird thread count must be at least 1")
 
@@ -71,20 +91,72 @@ class BlackbirdAdapter:
             "update_sites": self.settings.update_sites,
         }
         try:
-            with tempfile.TemporaryDirectory(prefix="private-search-blackbird-") as workdir:
-                payload = run_json_worker(
-                    command,
-                    request,
-                    cwd=Path(workdir),
-                    timeout_seconds=self.settings.timeout_seconds,
-                    env=self._worker_env(),
-                )
+            self._emit(
+                progress,
+                "connect",
+                "Connecting to Blackbird",
+                completed=1,
+                total=4,
+            )
+            with tempfile.TemporaryDirectory(prefix="theia-blackbird-") as workdir:
+                runner = run_streaming_json_worker if progress is not None else run_json_worker
+                runner_kwargs = {
+                    "cwd": Path(workdir),
+                    "timeout_seconds": self.settings.timeout_seconds,
+                    "env": self._worker_env(),
+                }
+                if progress is not None:
+                    self._emit(
+                        progress,
+                        "scan",
+                        "Scanning configured sites",
+                        completed=2,
+                        total=4,
+                    )
+                    runner_kwargs["on_progress"] = self._scan_progress(progress)
+                payload = runner(command, request, **runner_kwargs)
         except WorkerExecutionError as error:
             raise BlackbirdExecutionError(str(error)) from error
 
         if not isinstance(payload, list):
             raise BlackbirdExecutionError("Blackbird worker returned an unexpected response")
-        return self._normalize_results(payload, kind=operation)
+        self._emit(
+            progress,
+            "process",
+            "Processing results",
+            completed=3,
+            total=4,
+        )
+        results = self._normalize_results(payload, kind=operation)
+        self._emit(progress, "complete", "Complete", completed=4, total=4)
+        return results
+
+    @staticmethod
+    def _scan_progress(
+        progress: Callable[[ProgressEvent], None],
+    ) -> Callable[[ProgressEvent], None]:
+        def forward(event: ProgressEvent) -> None:
+            if event.phase == "complete":
+                return
+            detail = event.message.strip()
+            message = "Scanning configured sites"
+            if event.phase == "scan" and detail:
+                message = f"{message} — {detail}"
+            progress(ProgressEvent("scan", message, completed=2, total=4))
+
+        return forward
+
+    @staticmethod
+    def _emit(
+        progress: Callable[[ProgressEvent], None] | None,
+        phase: str,
+        message: str,
+        *,
+        completed: int,
+        total: int,
+    ) -> None:
+        if progress is not None:
+            progress(ProgressEvent(phase, message, completed=completed, total=total))
 
     def _worker_env(self) -> dict[str, str]:
         keep = (
@@ -107,7 +179,11 @@ class BlackbirdAdapter:
             if (value := os.environ.get(key))
         }
         env["PRIVATE_SEARCH_BLACKBIRD_THREADS"] = str(self.settings.threads)
+        env["PRIVATE_SEARCH_BLACKBIRD_ROOT"] = str(self.settings.root.expanduser().resolve())
         env["PRIVATE_SEARCH_BLACKBIRD_TIMEOUT"] = str(self.settings.timeout_seconds)
+        env["PRIVATE_SEARCH_BLACKBIRD_REQUEST_TIMEOUT"] = str(
+            self.settings.request_timeout_seconds
+        )
         env["PRIVATE_SEARCH_BLACKBIRD_UPDATE_SITES"] = (
             "1" if self.settings.update_sites else "0"
         )

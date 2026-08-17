@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from rich.console import Console
 
 from private_search.ai.actions import AgentAction
-from private_search.ai.chat import ChatTurnResult
+from private_search.ai.chat import ChatTurnResult, ContextUsage
 from private_search.ai.tools import ToolResult
 from private_search.app.chat_ui import (
     LocalCommand,
@@ -35,16 +35,15 @@ def test_parse_local_command_maps_exit_aliases():
 
 
 def test_help_and_legacy_image_commands_are_removed():
-    chat = FakeChat()
     console = Console(record=True)
 
-    assert execute_local_command(LocalCommand("help"), chat, console) is True
+    assert execute_local_command(LocalCommand("help"), console) is True
     assert "/image" not in console.export_text()
     assert "clear-image" not in console.export_text()
 
     for name in ("image", "clear-image"):
         command_console = Console(record=True)
-        assert execute_local_command(LocalCommand(name), chat, command_console) is True
+        assert execute_local_command(LocalCommand(name), command_console) is True
         assert "Unknown command" in command_console.export_text()
 
 
@@ -156,17 +155,15 @@ def test_readme_documents_project_image_folder_and_not_legacy_commands():
 
 
 def test_execute_local_command_returns_false_for_quit():
-    chat = FakeChat()
     console = Console(record=True)
 
-    assert execute_local_command(LocalCommand("quit", ""), chat, console) is False
+    assert execute_local_command(LocalCommand("quit", ""), console) is False
 
 
 def test_about_command_shows_theia_identity_and_tool_safeguards():
-    chat = FakeChat()
     console = Console(record=True)
 
-    assert execute_local_command(LocalCommand("about", ""), chat, console) is True
+    assert execute_local_command(LocalCommand("about", ""), console) is True
 
     output = console.export_text()
     assert "Theia" in output
@@ -175,6 +172,29 @@ def test_about_command_shows_theia_identity_and_tool_safeguards():
     assert "security-analyst" in output
     assert "No flirtation" in output
     assert "flirtatious" not in output.casefold()
+
+
+def test_thinking_and_context_commands_control_and_report_runtime_state():
+    class RuntimeChat:
+        thinking_enabled = True
+        context_usage = ContextUsage(used=1234, remaining=6958, total=8192, exact=True)
+
+        def set_thinking(self, enabled):
+            self.thinking_enabled = enabled
+
+    chat = RuntimeChat()
+    console = Console(record=True, width=100)
+
+    assert execute_local_command(LocalCommand("thinking", "off"), console, chat) is True
+    assert chat.thinking_enabled is False
+    assert execute_local_command(LocalCommand("context"), console, chat) is True
+    assert execute_local_command(LocalCommand("options"), console, chat) is True
+
+    output = console.export_text()
+    assert "Thinking mode: off" in output
+    assert "1,234 / 8,192" in output
+    assert "6,958" in output
+    assert "llama.cpp" in output
 
 
 def test_theia_message_uses_a_side_label_instead_of_a_panel():
@@ -273,6 +293,7 @@ def test_reverse_image_results_render_as_a_table():
     output = console.export_text()
     assert "Reverse-image results (1)" in output
     assert "Example #1" in output
+    assert "91.0% (Accurate)" in output
     assert "https://example.test/result" in output
 
 
@@ -389,10 +410,14 @@ def test_interactive_chat_wires_blackbird_for_username_and_email(monkeypatch):
             events.append(("tool_registry", kwargs))
 
     class FakeChatOrchestrator:
-        def __init__(self, client, registry):
+        def __init__(self, client, registry, **kwargs):
             events.append(("chat_init", registry))
+            events.append(("chat_kwargs", kwargs))
 
-    monkeypatch.setattr("private_search.app.chat_ui.RuntimeSettings.from_environment", lambda: object())
+    monkeypatch.setattr(
+        "private_search.app.chat_ui.RuntimeSettings.from_environment",
+        lambda: SimpleNamespace(context_size=8192),
+    )
     monkeypatch.setattr("private_search.app.chat_ui.LlamaServer", FakeServer)
     monkeypatch.setattr("private_search.app.chat_ui.LlamaClient", lambda server_url: ("client", server_url))
     monkeypatch.setattr(
@@ -411,4 +436,7 @@ def test_interactive_chat_wires_blackbird_for_username_and_email(monkeypatch):
     assert isinstance(registry_kwargs["username_osint_tool"], FakeBlackbirdAdapter)
     assert isinstance(registry_kwargs["email_osint_tool"], FakeBlackbirdAdapter)
     assert callable(registry_kwargs["reverse_image_resolver"])
+    assert next(value for key, value in events if key == "chat_kwargs") == {
+        "context_window": 8192
+    }
     assert ("server_stop", None) in events

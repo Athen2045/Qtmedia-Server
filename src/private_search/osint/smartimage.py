@@ -6,11 +6,16 @@ import csv
 import os
 import subprocess
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .. import config
-from ..ai.actions import AgentAction
+from ..progress import ProgressEvent
+
+if TYPE_CHECKING:
+    from ..ai.actions import AgentAction
 
 
 class SmartImageExecutionError(RuntimeError):
@@ -71,14 +76,26 @@ class SmartImageAdapter:
     def __init__(self, settings: SmartImageSettings | None = None) -> None:
         self.settings = settings or SmartImageSettings.from_environment()
 
-    def __call__(self, action: AgentAction) -> object:
+    def __call__(
+        self,
+        action: AgentAction,
+        *,
+        progress: Callable[[ProgressEvent], None] | None = None,
+    ) -> object:
         image_path = action.image_path
         if image_path is None:
             raise SmartImageExecutionError("image_path is required for SmartImage")
         image = Path(image_path).expanduser().resolve()
-        return self.search_image(image)
+        if progress is None:
+            return self.search_image(image)
+        return self.search_image(image, progress=progress)
 
-    def search_image(self, path: Path) -> list[dict[str, str]]:
+    def search_image(
+        self,
+        path: Path,
+        *,
+        progress: Callable[[ProgressEvent], None] | None = None,
+    ) -> list[dict[str, str]]:
         image = path.expanduser().resolve()
         if not image.is_file():
             raise SmartImageExecutionError(f"image file not found: {image}")
@@ -98,7 +115,15 @@ class SmartImageAdapter:
                 f"Choose one of: {allowed}"
             )
 
-        with tempfile.TemporaryDirectory(prefix="private-search-smartimage-") as workdir:
+        self._emit(
+            progress,
+            "upload",
+            "Uploading image to SmartImage",
+            completed=0,
+            total=3,
+        )
+
+        with tempfile.TemporaryDirectory(prefix="theia-smartimage-") as workdir:
             output = Path(workdir) / "results.delimited"
             novus_data = Path(workdir) / "novus"
             arguments = [
@@ -119,6 +144,13 @@ class SmartImageAdapter:
             command = [str(executable), *arguments]
             environment = os.environ.copy()
             environment["NOVUS_DATA_FOLDER"] = str(novus_data)
+            self._emit(
+                progress,
+                "upload",
+                "Submitting image to SmartImage",
+                completed=1,
+                total=3,
+            )
             try:
                 completed = self._run(command, workdir, environment)
             except subprocess.TimeoutExpired as error:
@@ -151,9 +183,16 @@ class SmartImageAdapter:
                 raise SmartImageExecutionError(f"SmartImage produced no results file: {detail[-800:]}")
 
             try:
+                self._emit(
+                    progress,
+                    "parse",
+                    "Parsing SmartImage results",
+                    completed=2,
+                    total=3,
+                )
                 with output.open("r", encoding="utf-8", newline="") as stream:
                     rows = csv.DictReader(stream, delimiter=self._DELIMITER)
-                    return [
+                    results = [
                         {
                             "name": row.get("Name", ""),
                             "url": row.get("Url", ""),
@@ -163,10 +202,38 @@ class SmartImageAdapter:
                         }
                         for row in rows
                     ]
+                    self._emit(
+                        progress,
+                        "complete",
+                        f"SmartImage returned {len(results)} result(s)",
+                        completed=3,
+                        total=3,
+                    )
+                    return results
             except (OSError, csv.Error) as error:
                 raise SmartImageExecutionError(
                     f"SmartImage produced an invalid delimited report: {error}"
                 ) from error
+
+    @staticmethod
+    def _emit(
+        progress: Callable[[ProgressEvent], None] | None,
+        phase: str,
+        message: str,
+        *,
+        completed: int,
+        total: int,
+    ) -> None:
+        if progress is None:
+            return
+        progress(
+            ProgressEvent(
+                phase=phase,
+                message=message,
+                completed=completed,
+                total=total,
+            )
+        )
 
     def _run(self, command: list[str], workdir: str, environment: dict[str, str]):
         return subprocess.run(

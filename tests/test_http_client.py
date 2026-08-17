@@ -4,12 +4,13 @@ from private_search.net import http_client
 
 
 class _Response:
-    def __init__(self, status_code, body=b"", encoding="utf-8"):
+    def __init__(self, status_code, body=b"", encoding="utf-8", headers=None):
         self.status_code = status_code
         self.encoding = encoding
         self.url = "https://example.test"
         self.closed = False
         self._body = body
+        self.headers = headers or {}
 
     def iter_content(self, chunk_size=8192):
         for start in range(0, len(self._body), chunk_size):
@@ -86,6 +87,22 @@ def test_backoff_is_jittered(monkeypatch):
         http_client.RETRY_BACKOFF_SECONDS + http_client.RETRY_JITTER_SECONDS,
         http_client.RETRY_BACKOFF_SECONDS * 2 + http_client.RETRY_JITTER_SECONDS,
     ]
+
+
+def test_retry_after_header_is_honored(monkeypatch):
+    delays = []
+    monkeypatch.setattr(http_client.time, "sleep", delays.append)
+    monkeypatch.setattr(http_client.random, "uniform", lambda _low, _high: 0)
+    session = _FlakySession(
+        [
+            _Response(429, headers={"Retry-After": "7"}),
+            _Response(200),
+        ]
+    )
+
+    http_client.get(session, "https://example.test")
+
+    assert delays == [7.0]
 
 
 def test_read_text_reassembles_a_chunked_body_and_closes_it():

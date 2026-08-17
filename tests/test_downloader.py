@@ -73,15 +73,32 @@ def test_download_video_sets_quiet_only_when_progress_given(monkeypatch):
 def test_build_ydl_options_includes_resilient_transfer_policy(monkeypatch):
     monkeypatch.delenv("PRIVATE_SEARCH_CONCURRENT_FRAGMENTS", raising=False)
     monkeypatch.delenv("PRIVATE_SEARCH_HTTP_CHUNK_SIZE", raising=False)
+    monkeypatch.delenv("PRIVATE_SEARCH_DOWNLOAD_TIMEOUT", raising=False)
+    monkeypatch.delenv("PRIVATE_SEARCH_DOWNLOAD_RETRIES", raising=False)
 
     options = downloader_module.build_ydl_options("https://www.xvideos.com/video123/title")
 
-    assert options["retries"] == http_client.RETRY_ATTEMPTS
-    assert options["fragment_retries"] == http_client.RETRY_ATTEMPTS
-    assert options["socket_timeout"] == 20
+    assert options["retries"] == 5
+    assert options["fragment_retries"] == 5
+    assert options["socket_timeout"] == 60
+    assert set(options["retry_sleep_functions"]) == {"http", "fragment", "extractor"}
+    assert options["retry_sleep_functions"]["fragment"](1) == 2.0
+    assert options["retry_sleep_functions"]["fragment"](3) == 6.0
+    assert options["retry_sleep_functions"]["fragment"](n=3) == 6.0
     assert options["continuedl"] is True
     assert options["concurrent_fragment_downloads"] == 4
     assert "http_chunk_size" not in options
+
+
+def test_build_ydl_options_allows_download_timeout_and_retry_overrides(monkeypatch):
+    monkeypatch.setenv("PRIVATE_SEARCH_DOWNLOAD_TIMEOUT", "90")
+    monkeypatch.setenv("PRIVATE_SEARCH_DOWNLOAD_RETRIES", "7")
+
+    options = downloader_module.build_ydl_options("https://www.xvideos.com/video123/title")
+
+    assert options["socket_timeout"] == 90
+    assert options["retries"] == 7
+    assert options["fragment_retries"] == 7
 
 
 def test_build_ydl_options_caps_configured_fragment_concurrency(monkeypatch):

@@ -33,6 +33,8 @@ def test_action_prompt_maps_search_requests_to_refine_search():
     assert "No emoji" in ACTION_SYSTEM_PROMPT
     assert "no flirtatious, suggestive, romantic, intimate, or adult-coded" in ACTION_SYSTEM_PROMPT
     assert "flirtatious adult personality" not in ACTION_SYSTEM_PROMPT
+    assert "coding" in ACTION_SYSTEM_PROMPT
+    assert "Swearing is allowed" in ACTION_SYSTEM_PROMPT
 
 
 def test_action_schema_requires_the_complete_canonical_object():

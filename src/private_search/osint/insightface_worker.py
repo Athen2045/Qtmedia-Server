@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import stat
 import sys
 import uuid
+from contextlib import redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -17,6 +19,7 @@ except ImportError:  # pragma: no cover - exercised by script-launch regression 
     from private_search.osint.face_store import FaceIndex, FaceRecord, ImageRecord
 
 _SUPPORTED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+_CUDA_DLL_HANDLES: list[object] = []
 
 
 class WorkerConfigurationError(RuntimeError):
@@ -118,7 +121,10 @@ def main() -> int:
         request = json.load(sys.stdin)
         if not isinstance(request, dict):
             raise TypeError("request must be a JSON object")
-        response = handle_request(request)
+        # InsightFace prints model-loading diagnostics; keep stdout reserved for
+        # the worker's single machine-readable JSON response.
+        with redirect_stdout(sys.stderr):
+            response = handle_request(request)
     except (OSError, TypeError, ValueError, WorkerConfigurationError) as error:  # pragma: no cover
         print(str(error), file=sys.stderr)
         return 1
@@ -160,9 +166,34 @@ def _parse_request(request: dict[str, object]) -> _Settings:
 
 
 def _available_providers() -> list[str]:
+    _prepare_cuda_runtime()
     import onnxruntime  # type: ignore[import-not-found]
 
     return list(onnxruntime.get_available_providers())
+
+
+def _prepare_cuda_runtime() -> None:
+    """Expose pip-installed CUDA DLLs to Windows before ORT creates sessions."""
+
+    site_packages = Path(sys.prefix) / "Lib" / "site-packages"
+    candidates = (
+        site_packages / "nvidia" / "cu13" / "bin" / "x86_64",
+        site_packages / "nvidia" / "cudnn" / "bin",
+        site_packages / "nvidia" / "cufft" / "bin",
+        site_packages / "nvidia" / "nvjitlink" / "bin",
+    )
+    existing = [path for path in candidates if path.is_dir()]
+    if not existing:
+        return
+    os.environ["PATH"] = os.pathsep.join([*(str(path) for path in existing), os.environ.get("PATH", "")])
+    add_dll_directory = getattr(os, "add_dll_directory", None)
+    if add_dll_directory is None:
+        return
+    for path in existing:
+        try:
+            _CUDA_DLL_HANDLES.append(add_dll_directory(str(path)))
+        except OSError:
+            continue
 
 
 def _requested_providers(policy: str, available_providers: list[str]) -> list[str]:
@@ -190,11 +221,25 @@ def _requested_providers(policy: str, available_providers: list[str]) -> list[st
 
 
 def _create_analysis(insightface_root: Path, model_name: str, providers: list[str]):
+    _prepare_cuda_runtime()
     import insightface  # type: ignore[import-not-found]
     from insightface.app import FaceAnalysis  # type: ignore[import-not-found]
 
-    analysis = FaceAnalysis(name=model_name, root=str(insightface_root), providers=providers)
-    analysis.prepare(ctx_id=-1, det_size=(640, 640))
+    analysis_kwargs = {
+        "name": model_name,
+        "root": str(insightface_root),
+        "providers": providers,
+        "allowed_modules": ["detection", "recognition"],
+    }
+    try:
+        analysis = FaceAnalysis(**analysis_kwargs)
+    except TypeError as error:
+        if "allowed_modules" not in str(error):
+            raise
+        # Keep compatibility with lightweight test doubles and older packages.
+        analysis_kwargs.pop("allowed_modules")
+        analysis = FaceAnalysis(**analysis_kwargs)
+    analysis.prepare(ctx_id=0 if providers[0] == "CUDAExecutionProvider" else -1, det_size=(640, 640))
     actual_provider = _active_provider(analysis)
     if actual_provider is None:
         raise WorkerConfigurationError("could not determine the active ONNX Runtime provider")
@@ -287,12 +332,23 @@ def _extract_faces(
     image_stem = image_path.stem
     for number, detected_face in enumerate(detected, start=1):
         bbox = [float(value) for value in list(_get_required_sequence(detected_face, "bbox"))]
-        landmarks = [float(value) for value in list(_get_required_sequence(detected_face, "kps"))]
+        landmarks = [
+            float(value)
+            for point in _get_required_sequence(detected_face, "kps")
+            for value in (point if isinstance(point, (list, tuple)) else [point])
+        ]
         embedding = [float(value) for value in list(_get_required_sequence(detected_face, "embedding"))]
         detection_score = float(detected_face.det_score)
         crop_path: Path | None = None
         if write_crops:
-            crop_image = norm_crop(image, landmark=landmarks)
+            landmark_input: object = landmarks
+            try:
+                import numpy as np  # type: ignore[import-not-found]
+
+                landmark_input = np.asarray(landmarks, dtype=np.float32).reshape(5, 2)
+            except ModuleNotFoundError:
+                pass
+            crop_image = norm_crop(image, landmark=landmark_input)
             crop_path = (crop_root / f"{image_stem}-face-{number}.jpg").resolve()
             if not cv2.imwrite(str(crop_path), crop_image):
                 raise WorkerConfigurationError(f"failed to write face crop: {crop_path}")

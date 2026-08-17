@@ -1,3 +1,3 @@
-"""Private Search: a local multi-site search and download tool."""
+"""THEIA: a local AI-assisted search, OSINT, and download terminal."""
 
 __version__ = "0.1.0"

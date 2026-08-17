@@ -1,9 +1,14 @@
-# Qt-Downloader
+# THEIA
 
-Qt-Downloader is a local terminal application for searching configured video
-sites, inspecting candidate links with [yt-dlp](https://github.com/yt-dlp/yt-dlp),
-deduplicating results by title and available quality, and downloading a selected
-video. Runtime data stays on the local machine.
+THEIA is a local AI-assisted terminal for search, media inspection, downloads,
+reverse-image research, and username/email OSINT. The interactive shell is
+powered by a local llama.cpp runtime; deterministic Python adapters keep network
+access, filesystem access, subprocesses, and side effects behind explicit
+confirmation and validation seams.
+
+The Python import namespace remains `private_search` for compatibility with
+existing scripts and worker protocols. The public project and command identity
+is THEIA.
 
 ## Features
 
@@ -18,6 +23,53 @@ video. Runtime data stays on the local machine.
 - Optional Kitty thumbnail preview before downloading a selected result.
 - `q` cancellation during an active download.
 - Optional integration with a self-hosted [Lustpress](https://github.com/sinkaroid/lustpress) instance.
+
+## Project structure
+
+```text
+THEIA/
+├── main.py                 # source-checkout launcher for the chat shell
+├── main.bat                # Windows launcher; uses .venv automatically
+├── pyproject.toml          # THEIA package metadata and console callbacks
+├── src/private_search/
+│   ├── app/                # Rich chat UI and scriptable Typer CLI
+│   ├── ai/                 # local model, action schema, tools, confirmation
+│   ├── search/             # adapters, retrieval, ranking, preview
+│   ├── download/           # yt-dlp, cancellation, transfer policy
+│   ├── osint/              # Blackbird, InsightFace, SmartImage adapters
+│   ├── sources/            # site-specific integrations
+│   ├── net/                # bounded HTTP transport
+│   └── config.py           # runtime paths and environment settings
+├── tests/                  # unit and integration-style seam tests
+├── scripts/                # isolated Blackbird/InsightFace setup
+├── context.md              # branch handoff and Markdown catalog
+└── var/                    # ignored tools, inputs, models, caches, downloads
+```
+
+The implementation package is organized around deep modules: the application
+layer owns interaction and confirmation, while search, download, OSINT, and
+transport modules own their respective behavior. `var/` is local runtime state;
+`Update/` is an ignored reference drop and `image/` is an ignored compatibility
+input folder. New installations use `var/tools/` for optional worker roots and
+`var/images/` for reverse-image inputs.
+
+## Entry points and callbacks
+
+THEIA has one public interactive callback and one public scriptable callback:
+
+```text
+theia                  -> private_search.app.chat_ui:interactive_chat
+theia-cli search       -> private_search.app.cli:app
+theia-cli download     -> private_search.app.cli:app
+```
+
+Compatibility callbacks remain available through `qt`, `private-search`, and
+`private-download`. The interactive shell renders a staged Rich progress bar
+for every confirmed external operation. Isolated workers stream structured
+site/phase updates over stderr while keeping their final response as one JSON
+value on stdout. Side-effecting AI actions pass through the confirmation
+callback and fixed Python adapters before they reach a downloader, worker, or
+external service.
 
 ## Requirements
 
@@ -64,8 +116,15 @@ python -m pip install -e ".[dev]"
 ### Optional OSINT worker setup
 
 Blackbird and InsightFace stay out of the main project environment. Their setup
-scripts create isolated worker virtual environments under `Update/blackbird/.venv`
-and `Update/insightface/.venv`.
+scripts create isolated worker virtual environments under
+`var/tools/blackbird/.venv` and `var/tools/insightface/.venv`. The vendor trees
+are optional local inputs; set `PRIVATE_SEARCH_BLACKBIRD_ROOT` or
+`PRIVATE_SEARCH_INSIGHTFACE_ROOT` when using a different installation.
+The setup scripts do not publish vendor source or copy the ignored `Update/`
+folder automatically. Place the separately obtained Blackbird tree at
+`var/tools/blackbird/` and the InsightFace Python package at
+`var/tools/insightface/python-package/`, or set the corresponding root
+environment variable before setup.
 
 On Windows PowerShell:
 
@@ -74,10 +133,10 @@ On Windows PowerShell:
 .\scripts\setup_insightface.ps1
 ```
 
-`setup_blackbird.ps1` installs the uploaded Blackbird requirements only. The
-application keeps Blackbird list updates disabled by default with
-`PRIVATE_SEARCH_BLACKBIRD_UPDATE_SITES=0`; enable updates only when you want to
-refresh its site list deliberately.
+`setup_blackbird.ps1` installs the uploaded Blackbird requirements and downloads
+the initial `wmn-data.json` username database. The application keeps Blackbird
+list updates disabled by default with `PRIVATE_SEARCH_BLACKBIRD_UPDATE_SITES=0`;
+enable updates only when you want to refresh its site list deliberately.
 
 `setup_insightface.ps1` installs the uploaded `python-package` into its own venv,
 pins `onnxruntime-gpu==1.27.0`, and reports whether
@@ -92,18 +151,22 @@ If you explicitly want the library's downloader, run it yourself from the
 InsightFace worker venv and expect a network download:
 
 ```powershell
-.\Update\insightface\.venv\Scripts\python.exe -m insightface.commands.insightface_cli model.download buffalo_l
+.\var\tools\insightface\.venv\Scripts\python.exe -m insightface.commands.insightface_cli model.download buffalo_l
 ```
 
 ## Usage
 
-After installing (`python -m pip install -e ".[dev]"`), the `qt` command is
-available:
+After installing (`python -m pip install -e ".[dev]"`), the `theia` and
+`theia-cli` commands are available:
 
 ```bash
-qt search "video title"
-qt download https://example.com/video-page
+theia
+theia-cli search "video title"
+theia-cli download https://example.com/video-page
 ```
+
+`qt` remains an alias for `theia-cli`. `private-search` and `private-download`
+remain compatibility callbacks for scripted callers.
 
 On Windows, the easiest path is to double-click `main.bat` or run it from
 PowerShell:
@@ -117,11 +180,19 @@ automatically; activation is not required. The chatbot starts the local
 llama.cpp server for the session and can route natural-language requests to
 the existing search and download tools. Its assistant identity is Theia: a
 sharp, concise, cheeky security-analyst guide with dry wit. She does not use
-flirtation, emojis, or filler. Use `/about` to see the active model and the
-application safeguards. Use these local commands:
+flirtation, emojis, or filler. Cussing is allowed when it fits naturally.
+Theia has a free-form lane for casual conversation, coding, debugging,
+planning, writing, and technical analysis; tool requests still use the strict
+validated action lane and confirmation gates. Internal reasoning is not
+printed as hidden chain-of-thought. Use `/about` to see the active model and
+the application safeguards. Use these local commands:
 
 ```text
 /about            Show Theia, model, and safeguards
+/thinking on      Enable thinking for conversational answers
+/thinking off     Disable thinking for conversational answers
+/context          Show context tokens used versus remaining
+/options          Show current runtime options
 /help             Show chat commands
 /quit             Exit and stop the local model
 ```
@@ -145,28 +216,29 @@ Epistein'`. The keyword is removed from the title query before the selected
 site adapters run. A search without a source keyword keeps the adult-source
 scope for compatibility with the existing downloader.
 
-`qt search` shows matching results in a table. Select a result to view its
+`theia-cli search` shows matching results in a table. Select a result to view its
 metadata and, when running inside Kitty, its thumbnail. Type `r` after the
 preview to choose another result, `y` to download it, or press Enter to skip.
 The provider search runs only once while you move between results. Pass
 `--direct-url <url>`
 without a query to inspect a single URL with yt-dlp; inspection mode never
-downloads. Use `--no-prompt` when running a search from a script. `qt download
+downloads. Use `--no-prompt` when running a search from a script. `theia-cli download
 <url>` downloads a direct video URL immediately, showing a live progress bar.
 
 Kitty preview mode downloads and caches only the selected thumbnail under
 `var/cache/thumbnails/`. It is optional; text-only terminals continue to show
 the thumbnail URL instead.
 
-The console commands remain available for advanced or scripted use:
+Compatibility console callbacks remain available for advanced or scripted use:
 
 ```bash
 private-search "video title"
 private-download https://example.com/video-page
 ```
 
-`main.bat` is the supported Windows launcher; it opens the chatbot with the
-project virtual environment automatically, so activation is not required.
+`theia` and `main.bat` are the supported THEIA launchers. `main.bat` opens the
+chatbot with the project virtual environment automatically, so activation is
+not required.
 
 Downloads are saved under `var/downloads/`. Enter `q` and press Return when
 prompted during a download to request cancellation; press `Ctrl+C` to
@@ -221,6 +293,14 @@ projector, and the CUDA-enabled Windows `llama-server.exe` under `var/`. The
 runtime passes `--device CUDA0 --gpu-layers 999` when that build is installed,
 so the model and projector are offloaded to the first NVIDIA GPU. Override
 paths or limits with the `PRIVATE_SEARCH_LLM_*` variables in `.env.example`.
+The default context window is 8192 tokens and the default generation budget is
+4096 tokens, suitable for the configured 4B model on the target 16 GB GPU;
+reduce these values if another GPU or a smaller memory budget is used.
+Thinking mode is off by default and can be changed during a session with
+`/thinking on` and `/thinking off`; the structured tool classifier remains in deterministic
+non-thinking mode. `/context` reports llama.cpp's token usage from the latest
+request and the remaining configured context capacity, falling back to a
+clearly marked estimate when usage metadata is unavailable.
 The server binds to `127.0.0.1`, exposes a local health endpoint, and is
 stopped when the chat session exits. The local client and action validator reject non-loopback
 endpoints, malformed JSON, unknown actions, unsafe URLs, and missing
@@ -237,17 +317,26 @@ orchestrator keeps bounded history.
 Blackbird replaces the old Tookie worker for username and email lookups. The
 Theia tool layer sends one explicit username or email into the isolated
 Blackbird worker, then renders normalized site hits back in chat after
-confirmation. The worker interpreter, root, timeout, thread count, and optional
-site-list refresh policy are controlled by `PRIVATE_SEARCH_BLACKBIRD_*`.
+confirmation. The worker interpreter, root, overall timeout, per-site request
+timeout, thread count, and optional site-list refresh policy are controlled by
+`PRIVATE_SEARCH_BLACKBIRD_*`. The default per-site request timeout is 15 seconds;
+when the overall deadline is reached, Blackbird cancels unfinished probes and
+returns completed results instead of leaving the chat waiting for a hard worker
+timeout.
 
 Blackbird is networked OSINT, not an offline corpus. Results depend on the
 current state of the upstream sites and the packaged Blackbird list data. If
 you want to refresh the list data, set `PRIVATE_SEARCH_BLACKBIRD_UPDATE_SITES=1`
 for a deliberate run, then switch it back off for routine use.
 
+During a lookup, Blackbird emits one `scan` progress event after each completed
+site. Theia displays the exact completed/total count when the worker provides
+it, including partial results when the worker deadline is reached.
+
 ### SmartImage and InsightFace reverse-image search
 
-The setup builds and publishes only `Update/SmartImage-4/SmartImage.Rdx`, not
+The setup builds and publishes only the local SmartImage source tree's
+`SmartImage.Rdx` project, not
 the SmartImage GUI. The default published executable is
 `var/smartimage-rdx/SmartImage.exe`. The launcher sets `NOVUS_DATA_FOLDER` to a
 temporary writable directory for each scan so SmartImage's cache does not
@@ -267,7 +356,7 @@ search engines, so Theia asks for confirmation before it runs. Results are
 untrusted matches, not proof of identity, ownership, or authorship.
 
 InsightFace runs locally in its own worker process before SmartImage runs. It
-indexes supported files under the project `image/` folder, stores embeddings in
+indexes supported files under `var/images/`, stores embeddings in
 `var/face-index.sqlite` by default, and writes aligned crops under
 `var/face-crops/`. Override the worker interpreter, roots, timeout, model,
 provider policy, image root, index path, crop path, and crop-retention behavior
@@ -279,7 +368,14 @@ Blackbird are networked and remain confirmation-gated. Theia keeps one privacy
 checkpoint before any SmartImage upload, and the resulting local plus web
 matches are filtered to a 75% minimum confidence threshold before being shown.
 
-When you add or remove files under `image/`, the local face index is refreshed
+The worker progress protocol uses stderr lines prefixed with
+`THEIA_PROGRESS ` followed by a JSON object containing `phase`, `message`, and
+optional `completed`/`total` fields. Ordinary stderr remains diagnostics and
+stdout remains reserved for the final JSON response. InsightFace and SmartImage
+report staged phases; those bars indicate workflow stages rather than a claimed
+percentage of remote work.
+
+When you add or remove files under `var/images/`, the local face index is refreshed
 the next time InsightFace runs. The query image itself must stay inside that
 folder so the worker cannot be pointed at arbitrary paths outside the project.
 
@@ -291,7 +387,7 @@ credentials, or cache databases.
 Run the local quality checks before submitting a change:
 
 ```bash
-ruff check .
+ruff check src tests main.py benchmarks
 pytest -q
 python -m compileall -q src tests main.py benchmarks
 ```
@@ -315,11 +411,18 @@ and the remaining configured sources continue when possible.
 
 **Blackbird does not start or reports a missing worker interpreter.** Run
 `.\scripts\setup_blackbird.ps1`, or point `PRIVATE_SEARCH_BLACKBIRD_PYTHON` at
-the isolated interpreter under `Update/blackbird/.venv/Scripts/python.exe`.
+the isolated interpreter under `var/tools/blackbird/.venv/Scripts/python.exe`.
 
 **Blackbird results look stale.** The packaged worker keeps site-list updates
 disabled by default. Set `PRIVATE_SEARCH_BLACKBIRD_UPDATE_SITES=1` only for an
 intentional refresh run, then restore it to `0`.
+
+**Blackbird searches appear slow.** Theia shows a live progress bar with the
+completed site count while the isolated worker runs. Individual probes are bounded by
+`PRIVATE_SEARCH_BLACKBIRD_REQUEST_TIMEOUT` (15 seconds by default), and the
+worker returns completed results when its overall deadline is reached. Increase
+that variable only for unusually slow sites; do not set it to the overall
+worker timeout.
 
 **InsightFace reports CPU degraded mode or no CUDA provider.** Rerun
 `.\scripts\setup_insightface.ps1` and check the provider output. The worker
@@ -333,7 +436,7 @@ weights. Manually place the licensed model pack under
 command yourself if you accept the network transfer and the model license terms.
 
 **Reverse-image search misses newly added local photos.** Put supported files
-under the project `image/` folder and rerun the reverse-image workflow. The
+under `var/images/` and rerun the reverse-image workflow. The
 worker refreshes the local SQLite face index during that run.
 
 **Worker errors mention paths, timeouts, or unsupported images.** Confirm the

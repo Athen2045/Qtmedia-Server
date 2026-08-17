@@ -6,6 +6,9 @@ import select
 import sys
 import threading
 import time
+from collections.abc import Callable, Mapping
+
+DownloadProgressCallback = Callable[[Mapping[str, object]], None]
 
 CANCEL_WORDS = {"q", "quit", "exit"}
 # How long the listener waits on stdin before rechecking whether the download
@@ -67,7 +70,7 @@ class DownloadCancellation:
             # listener is guaranteed not to steal the next line of input.
             listener.join(timeout=POLL_SECONDS * 10)
 
-    def progress_hook(self, _status: dict) -> None:
+    def progress_hook(self, _status: Mapping[str, object]) -> None:
         if self.cancelled.is_set():
             raise DownloadCancelled
 

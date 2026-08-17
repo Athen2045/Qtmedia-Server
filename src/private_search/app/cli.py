@@ -1,8 +1,9 @@
-"""Typer + Rich CLI: ``qt search`` and ``qt download``."""
+"""THEIA's scriptable Typer + Rich CLI for search and downloads."""
 
 from __future__ import annotations
 
 import sys
+from collections.abc import Mapping
 from typing import Annotated
 from urllib.parse import urlparse
 
@@ -25,7 +26,7 @@ from ..download import engine as downloader
 from ..search import engine as search
 from ..search.preview import render_thumbnail
 
-app = typer.Typer(name="qt", help="Search and download videos from configured sites.")
+app = typer.Typer(name="theia-cli", help="Search and download videos from THEIA.")
 console = Console()
 error_console = Console(stderr=True)
 
@@ -42,7 +43,7 @@ def _run_download(url: str) -> None:
     with progress:
         task_id = progress.add_task("Downloading", total=None)
 
-        def hook(status: dict) -> None:
+        def hook(status: Mapping[str, object]) -> None:
             if status.get("status") == "downloading":
                 total = status.get("total_bytes") or status.get("total_bytes_estimate")
                 downloaded = status.get("downloaded_bytes", 0)
@@ -106,7 +107,7 @@ def _render_selected_result(result: search.VideoResult) -> None:
     )
 
 
-def _prompt_and_download(results: list[search.VideoResult], *, interactive: bool = False) -> None:
+def _prompt_and_download(results: list[search.VideoResult]) -> None:
     if not results:
         return
     while True:
@@ -124,8 +125,6 @@ def _prompt_and_download(results: list[search.VideoResult], *, interactive: bool
             error_console.print(
                 f"[red]Choose a number from 1 to {len(results)}, or press Enter/q to skip.[/red]"
             )
-            if interactive:
-                return
             raise typer.Exit(code=2)
 
         _render_selected_result(chosen)
@@ -139,79 +138,6 @@ def _prompt_and_download(results: list[search.VideoResult], *, interactive: bool
         if action in {"y", "yes"}:
             _run_download(chosen.url)
         return
-
-
-def _pause_for_menu() -> None:
-    Prompt.ask("Press Enter to return to the main menu", default="", show_default=False)
-
-
-def _interactive_search() -> None:
-    query = Prompt.ask("Search keywords").strip()
-    if not query:
-        error_console.print("[yellow]Enter at least one search term.[/yellow]")
-        return
-    results = search.search(query, [], list(search.DEFAULT_EXCLUDES), search.MIN_VIEWS)
-    _render_results(results)
-    _prompt_and_download(results, interactive=True)
-    _pause_for_menu()
-
-
-def _interactive_download() -> None:
-    url = Prompt.ask("Video page URL").strip()
-    if not url:
-        return
-    try:
-        _run_download(url)
-    except typer.Exit:
-        pass
-    _pause_for_menu()
-
-
-def _interactive_inspect() -> None:
-    url = Prompt.ask("Video page URL").strip()
-    if not url:
-        return
-    parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        error_console.print("[red]Enter a complete http:// or https:// video URL.[/red]")
-    else:
-        result = search.inspect_direct_url(url)
-        _render_results([result] if result else [])
-    _pause_for_menu()
-
-
-def _interactive_help() -> None:
-    console.print("[bold]QT Downloader help[/bold]")
-    console.print("1 searches configured sites and offers to download a result.")
-    console.print("2 downloads a direct video page URL with progress.")
-    console.print("3 inspects metadata only; it never downloads the video.")
-    console.print("Use q at the menu to exit.")
-    _pause_for_menu()
-
-
-def interactive_menu() -> None:
-    """Run the simple menu used by the root Windows launcher."""
-    while True:
-        console.rule("[bold]QT Downloader[/bold]")
-        console.print("[bold]1[/bold] Search for a video")
-        console.print("[bold]2[/bold] Download a video link")
-        console.print("[bold]3[/bold] Inspect a video link")
-        console.print("[bold]4[/bold] Help")
-        console.print("[bold]q[/bold] Quit")
-        choice = Prompt.ask("Choose an option").strip().casefold()
-        if choice == "1":
-            _interactive_search()
-        elif choice == "2":
-            _interactive_download()
-        elif choice == "3":
-            _interactive_inspect()
-        elif choice == "4":
-            _interactive_help()
-        elif choice == "q":
-            console.print("Goodbye.")
-            return
-        else:
-            error_console.print("[yellow]Choose 1, 2, 3, 4, or q.[/yellow]")
 
 
 @app.command("search")
@@ -268,8 +194,8 @@ _click_app = get_command(app)
 
 
 def run_search_alias() -> None:
-    _click_app.main(args=["search", *sys.argv[1:]], prog_name="qt")
+    _click_app.main(args=["search", *sys.argv[1:]], prog_name="theia-cli")
 
 
 def run_download_alias() -> None:
-    _click_app.main(args=["download", *sys.argv[1:]], prog_name="qt")
+    _click_app.main(args=["download", *sys.argv[1:]], prog_name="theia-cli")

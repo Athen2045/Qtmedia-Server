@@ -2,15 +2,15 @@
 title: "CI Quality Gate Workflow Specification"
 status: "implemented"
 version: "1.0"
-last_updated: "2026-07-30"
-owner: "Private Search maintainers"
+last_updated: "2026-08-17"
+owner: "THEIA maintainers"
 ---
 
 # CI Quality Gate Workflow Specification
 
 ## 1. Purpose
 
-Define the automated quality gate for changes to Private Search. The workflow
+Define the automated quality gate for changes to THEIA. The workflow
 must detect source errors, lint violations, and test regressions before changes
 are merged into `main`.
 
@@ -22,7 +22,8 @@ media downloads, external site availability, or production monitoring.
 
 ## 3. Trigger and concurrency policy
 
-The workflow runs for pushes to `main` and pull requests targeting `main`.
+The workflow runs for pushes to `main` and `Theia`, plus pull requests targeting
+`main`.
 Only the latest run for a given workflow/ref pair should continue when a newer
 run is queued; obsolete runs may be cancelled.
 

@@ -8,6 +8,12 @@ import re
 from ..net import http_client
 
 REQUEST_TIMEOUT = 20
+DEFAULT_DOWNLOAD_TIMEOUT = 60
+MAX_DOWNLOAD_TIMEOUT = 600
+DEFAULT_DOWNLOAD_RETRIES = 5
+MAX_DOWNLOAD_RETRIES = 10
+RETRY_SLEEP_SECONDS = 2.0
+MAX_RETRY_SLEEP_SECONDS = 30.0
 DEFAULT_CONCURRENT_FRAGMENTS = 4
 MAX_CONCURRENT_FRAGMENTS = 8
 SIZE_PATTERN = re.compile(r"^(?P<value>\d+)\s*(?P<unit>[kmg])?b?$", re.IGNORECASE)
@@ -35,12 +41,23 @@ def _configured_size(name: str) -> int | None:
     return int(match.group("value")) * multiplier.get((match.group("unit") or "").casefold(), 1)
 
 
-def common_ydl_options() -> dict[str, object]:
+def _download_retry_sleep(n: int = 1) -> float:
+    """Back off between transient HTTP/fragment retries without hanging forever."""
+
+    return min(RETRY_SLEEP_SECONDS * max(1, n), MAX_RETRY_SLEEP_SECONDS)
+
+
+def common_ydl_options(
+    *,
+    timeout: int = REQUEST_TIMEOUT,
+    retries: int = http_client.RETRY_ATTEMPTS,
+    retry_sleep: bool = False,
+) -> dict[str, object]:
     """Return transfer settings shared by inspection and download paths."""
     options: dict[str, object] = {
-        "retries": http_client.RETRY_ATTEMPTS,
-        "fragment_retries": http_client.RETRY_ATTEMPTS,
-        "socket_timeout": REQUEST_TIMEOUT,
+        "retries": retries,
+        "fragment_retries": retries,
+        "socket_timeout": timeout,
         "continuedl": True,
         "concurrent_fragment_downloads": _configured_int(
             "PRIVATE_SEARCH_CONCURRENT_FRAGMENTS",
@@ -48,7 +65,31 @@ def common_ydl_options() -> dict[str, object]:
             MAX_CONCURRENT_FRAGMENTS,
         ),
     }
+    if retry_sleep:
+        options["retry_sleep_functions"] = {
+            "http": _download_retry_sleep,
+            "fragment": _download_retry_sleep,
+            "extractor": _download_retry_sleep,
+        }
     http_chunk_size = _configured_size("PRIVATE_SEARCH_HTTP_CHUNK_SIZE")
     if http_chunk_size is not None:
         options["http_chunk_size"] = http_chunk_size
     return options
+
+
+def download_ydl_options() -> dict[str, object]:
+    """Return yt-dlp settings tuned for slow or intermittently failing CDNs."""
+
+    return common_ydl_options(
+        timeout=_configured_int(
+            "PRIVATE_SEARCH_DOWNLOAD_TIMEOUT",
+            DEFAULT_DOWNLOAD_TIMEOUT,
+            MAX_DOWNLOAD_TIMEOUT,
+        ),
+        retries=_configured_int(
+            "PRIVATE_SEARCH_DOWNLOAD_RETRIES",
+            DEFAULT_DOWNLOAD_RETRIES,
+            MAX_DOWNLOAD_RETRIES,
+        ),
+        retry_sleep=True,
+    )

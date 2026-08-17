@@ -7,10 +7,12 @@ site adapters, then lets yt-dlp inspect and download only direct video URLs.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import (  # pylint: disable=no-name-in-module
     ThreadPoolExecutor,
     as_completed,
@@ -25,6 +27,7 @@ from ..config import DOWNLOAD_ROOT, SEARCH_CACHE, ensure_runtime_directories
 from ..download.transfer import REQUEST_TIMEOUT as TRANSFER_REQUEST_TIMEOUT
 from ..download.transfer import common_ydl_options
 from ..net import http_client
+from ..progress import ProgressEvent
 from ..sources.lustpress import is_configured as lustpress_is_configured
 from ..sources.lustpress import search_site as lustpress_search_site
 from ..sources.pmvhaven import fetch_metadata, is_pmvhaven_url
@@ -41,7 +44,7 @@ DEFAULT_EXCLUDES = ["ai", "ai-generated", "vr"]
 REQUEST_TIMEOUT = TRANSFER_REQUEST_TIMEOUT
 MAX_CANDIDATES_PER_SITE = 20
 SEARCH_WORKERS = 8
-INSPECTION_WORKERS = 4
+INSPECTION_WORKERS = 6
 # Workers start one short beat apart instead of all at once. The full pool
 # still runs concurrently — this only spreads the initial burst of TLS
 # handshakes and first response bodies, which is the part that hits the
@@ -60,6 +63,23 @@ WORKER_EXCEPTIONS = (
     TypeError,
     OSError,
 )
+
+
+def _configured_int(name: str, default: int, maximum: int) -> int:
+    value = os.getenv(name, "").strip()
+    try:
+        parsed = int(value)
+    except ValueError:
+        return default
+    return max(1, min(parsed, maximum))
+
+
+def _candidate_cap() -> int:
+    return _configured_int(
+        "PRIVATE_SEARCH_CANDIDATES_PER_SITE",
+        MAX_CANDIDATES_PER_SITE,
+        50,
+    )
 
 
 @dataclass(frozen=True)
@@ -133,9 +153,23 @@ class SearchCandidate:
     url: str
 
 
+@dataclass(frozen=True)
+class SearchRequest:
+    """A cleaned title query and source scope derived from user wording."""
+
+    query: str
+    scope: str
+
+
 ADAPTERS = [
-    SiteAdapter("XVideos", "https://www.xvideos.com/?k={query}", r"/video(?:\.|\d)"),
     SiteAdapter("XHamster", "https://xhamster.com/search/{query}", r"/videos/"),
+    SiteAdapter("XVideos", "https://www.xvideos.com/?k={query}", r"/video(?:\.|\d)"),
+    SiteAdapter(
+        "YouJizz",
+        "https://www.youjizz.com/tags/{query}-1.html",
+        r"/videos/",
+        query_style="slug",
+    ),
     SiteAdapter(
         "SpankBang",
         "https://spankbang.com/s/{query}/",
@@ -158,12 +192,6 @@ ADAPTERS = [
         r"/[^/]+/[^/]+/video\d+|/video\d+",
     ),
     SiteAdapter(
-        "YouJizz",
-        "https://www.youjizz.com/tags/{query}-1.html",
-        r"/videos/",
-        query_style="slug",
-    ),
-    SiteAdapter(
         "YouPorn",
         "https://www.youporn.com/porntags/{query}/",
         r"/watch/",
@@ -172,7 +200,76 @@ ADAPTERS = [
         ),
         query_style="slug",
     ),
+    SiteAdapter("PMVHaven", "https://pmvhaven.com/search?q={query}", r"/video/"),
+    SiteAdapter(
+        "YouTube",
+        "https://www.youtube.com/results?search_query={query}",
+        r"/watch(?:$|[?#])",
+    ),
 ]
+
+
+_PORN_SOURCES = (
+    "XHamster",
+    "XVideos",
+    "YouJizz",
+    "SpankBang",
+    "TNAFlix",
+    "PMVHaven",
+    "YouPorn",
+)
+_SOURCE_ALIASES = {
+    "porn": "porn",
+    "adult": "porn",
+    "xhamster": "XHamster",
+    "xvideos": "XVideos",
+    "youjizz": "YouJizz",
+    "spankbang": "SpankBang",
+    "tnaflix": "TNAFlix",
+    "pmvhaven": "PMVHaven",
+    "youporn": "YouPorn",
+    "youtube": "YouTube",
+    "all": "all",
+}
+_SEARCH_SCOPE_PATTERN = re.compile(
+    r"(?<![\w-])(" + "|".join(re.escape(item) for item in _SOURCE_ALIASES) + r")(?![\w-])",
+    re.IGNORECASE,
+)
+_QUOTED_QUERY_PATTERN = re.compile(r'''(?:"([^"]+)"|'([^']+)'|“([^”]+)”|‘([^’]+)’)''')
+
+
+def adapters_for_scope(scope: str | None) -> tuple[SiteAdapter, ...]:
+    """Return adapters for a normalized source scope.
+
+    An omitted scope keeps the application's original adult-search behavior.
+    """
+    normalized = _SOURCE_ALIASES.get((scope or "porn").strip().casefold())
+    if normalized is None:
+        raise ValueError(f"unknown search scope: {scope}")
+    if normalized == "porn":
+        names = _PORN_SOURCES
+    elif normalized == "all":
+        return tuple(ADAPTERS)
+    else:
+        names = (normalized,)
+    by_name = {adapter.name: adapter for adapter in ADAPTERS}
+    return tuple(by_name[name] for name in names)
+
+
+def parse_search_request(user_text: str, fallback_query: str) -> SearchRequest:
+    """Extract an explicit source keyword and title query from user wording."""
+    text = user_text.strip()
+    scope_match = _SEARCH_SCOPE_PATTERN.search(text)
+    scope = _SOURCE_ALIASES[scope_match.group(1).casefold()].casefold() if scope_match else "porn"
+    quoted_match = _QUOTED_QUERY_PATTERN.search(text)
+    query = next((group for group in quoted_match.groups() if group), None) if quoted_match else None
+    if query is None:
+        query = fallback_query.strip()
+        query = re.sub(r"^\s*(?:search|find)(?:\s+for)?\b", "", query, flags=re.IGNORECASE)
+        query = _SEARCH_SCOPE_PATTERN.sub(" ", query, count=1).strip(" \t:,-")
+    if not query:
+        raise ValueError("search query must not be empty")
+    return SearchRequest(query=query.strip(), scope=scope)
 
 
 def impersonate_for_url(url: str) -> str | None:
@@ -281,7 +378,7 @@ def _parse_candidates(adapter: SiteAdapter, search_url: str, html: str, query: s
         candidates_by_key.values(),
         key=lambda candidate: quality_relevance_score(candidate.title, query),
         reverse=True,
-    )[:MAX_CANDIDATES_PER_SITE]
+    )[:_candidate_cap()]
 
 
 def parse_int(value: str | None) -> int | None:
@@ -344,7 +441,10 @@ def xvideos_view_count(url: str, site: str) -> int | None:
 
 
 def search_adapter(
-    adapter: SiteAdapter, query: str, start_delay: float = 0.0
+    adapter: SiteAdapter,
+    query: str,
+    start_delay: float = 0.0,
+    quiet: bool = False,
 ) -> list[SearchCandidate]:
     """Fetch and cheaply filter one site's search page.
 
@@ -353,7 +453,8 @@ def search_adapter(
     hit still returns immediately.
     """
     if adapter.search_url is None:
-        print(f"[{adapter.name}] search unavailable: {adapter.disabled_reason}")
+        if not quiet:
+            print(f"[{adapter.name}] search unavailable: {adapter.disabled_reason}")
         return []
     init_cache()
     cache_key = f"{adapter.name}:{query.casefold()}"
@@ -391,13 +492,13 @@ def search_adapter(
                     last_error = error
     except http_client.HTTP_EXCEPTIONS as error:
         last_error = error
-    if not candidates and last_error is not None:
+    if not quiet and not candidates and last_error is not None:
         print(f"[{adapter.name}] search failed: {last_error}")
     cache_candidates(cache_key, candidates)
     return candidates
 
 
-def search_lustpress(query: str) -> list[SearchCandidate]:
+def search_lustpress(query: str, quiet: bool = False) -> list[SearchCandidate]:
     """Search configured Lustpress sources and adapt them to our pipeline."""
     if not lustpress_is_configured():
         return []
@@ -413,7 +514,8 @@ def search_lustpress(query: str) -> list[SearchCandidate]:
                 for item in lustpress_search_site(site, query)
             ]
         except (requests.RequestException, ValueError) as error:
-            print(f"[Lustpress/{site}] search failed: {error}")
+            if not quiet:
+                print(f"[Lustpress/{site}] search failed: {error}")
             return []
         cache_candidates(cache_key, site_candidates)
         return site_candidates
@@ -423,13 +525,12 @@ def search_lustpress(query: str) -> list[SearchCandidate]:
         searches = [pool.submit(search_one, site) for site in ("xvideos", "xhamster", "youporn")]
         for future in as_completed(searches):
             candidates.extend(future.result())
-    return candidates[: MAX_CANDIDATES_PER_SITE * 3]
+    return candidates[: _candidate_cap() * 3]
 
 
 def text_passes_filters(
     title: str,
     url: str,
-    filters: list[str],
     excludes: list[str],
 ) -> bool:
     text = f"{title} {url}"
@@ -548,7 +649,7 @@ def cache_candidates(cache_key: str, candidates: list[SearchCandidate]) -> None:
         )
 
 
-def inspect_candidate(candidate: SearchCandidate) -> VideoResult | None:
+def inspect_candidate(candidate: SearchCandidate, quiet: bool = False) -> VideoResult | None:
     cached = load_cached_result(candidate.url)
     if cached:
         return cached
@@ -564,7 +665,8 @@ def inspect_candidate(candidate: SearchCandidate) -> VideoResult | None:
             try:
                 pmv_metadata = fetch_metadata(candidate.url)
             except (requests.RequestException, TypeError, ValueError) as metadata_error:
-                print(f"[PMVHaven] API metadata unavailable: {metadata_error}")
+                if not quiet:
+                    print(f"[PMVHaven] API metadata unavailable: {metadata_error}")
         if pmv_metadata:
             result = VideoResult(
                 title=pmv_metadata.title,
@@ -576,7 +678,8 @@ def inspect_candidate(candidate: SearchCandidate) -> VideoResult | None:
             )
             cache_result(result, candidate.url)
             return result
-        print(f"[{candidate.site}] skipped {candidate.url}: {error}")
+        if not quiet:
+            print(f"[{candidate.site}] skipped {candidate.url}: {error}")
         return None
 
     formats = info.get("formats") or []
@@ -597,16 +700,6 @@ def inspect_candidate(candidate: SearchCandidate) -> VideoResult | None:
     )
     cache_result(result, candidate.url)
     return result
-
-
-def passes_filters(
-    result: VideoResult,
-    filters: list[str],
-    excludes: list[str],
-    min_views: int,
-    extra_text: str = "",
-) -> bool:
-    return filter_rejection_reason(result, filters, excludes, min_views, extra_text) is None
 
 
 def filter_rejection_reason(
@@ -649,52 +742,81 @@ def deduplicate(results: list[VideoResult], query: str = "") -> list[VideoResult
 
 def search(
     query: str,
-    filters: list[str],
-    excludes: list[str],
-    min_views: int,
+    filters: list[str] | None = None,
+    excludes: list[str] | None = None,
+    min_views: int | None = None,
+    *,
+    source_scope: str | None = None,
+    progress: Callable[[ProgressEvent], None] | None = None,
 ) -> list[VideoResult]:
+    filters = list(filters or [])
+    excludes = list(excludes or [])
+    min_views = MIN_VIEWS if min_views is None else min_views
+    selected_adapters = adapters_for_scope(source_scope)
+    selected_names = {adapter.name for adapter in selected_adapters}
+    include_lustpress = lustpress_is_configured() and bool(
+        selected_names & {"XHamster", "XVideos", "YouPorn"}
+    )
+    quiet = progress is not None
+    if progress is not None:
+        progress(ProgressEvent("query", "Querying sources", completed=1, total=3))
     init_cache()
     candidates: list[SearchCandidate] = []
-    max_workers = min(SEARCH_WORKERS, len(ADAPTERS) + int(lustpress_is_configured()))
+    max_search_workers = _configured_int("PRIVATE_SEARCH_SEARCH_WORKERS", SEARCH_WORKERS, 16)
+    max_inspection_workers = _configured_int(
+        "PRIVATE_SEARCH_INSPECTION_WORKERS",
+        INSPECTION_WORKERS,
+        16,
+    )
+    max_workers = min(max_search_workers, len(selected_adapters) + int(include_lustpress))
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         searches = {
-            pool.submit(search_adapter, adapter, query, index * SEARCH_STAGGER_SECONDS): adapter
-            for index, adapter in enumerate(ADAPTERS)
+            pool.submit(
+                search_adapter,
+                adapter,
+                query,
+                index * SEARCH_STAGGER_SECONDS,
+                quiet,
+            ): adapter
+            for index, adapter in enumerate(selected_adapters)
         }
-        if lustpress_is_configured():
-            searches[pool.submit(search_lustpress, query)] = None
+        if include_lustpress:
+            searches[pool.submit(search_lustpress, query, quiet)] = None
         for future in as_completed(searches):
             try:
                 found_candidates = future.result()
             except WORKER_EXCEPTIONS as error:
-                print(f"Search worker failed: {error}")
+                if not quiet:
+                    print(f"Search worker failed: {error}")
                 continue
             for candidate in found_candidates:
-                if text_passes_filters(candidate.title, candidate.url, filters, excludes):
+                if text_passes_filters(candidate.title, candidate.url, excludes):
                     candidates.append(candidate)
 
     unique_candidates: dict[str, SearchCandidate] = {}
     for candidate in candidates:
         unique_candidates.setdefault(canonical_url(candidate.url), candidate)
 
-    print(f"Found {len(unique_candidates)} candidate links before yt-dlp inspection.")
+    if not quiet:
+        print(f"Found {len(unique_candidates)} candidate links before yt-dlp inspection.")
 
     results: list[VideoResult] = []
     extraction_failures = 0
     rejection_counts: dict[str, int] = {}
-    with ThreadPoolExecutor(max_workers=INSPECTION_WORKERS) as pool:
+    with ThreadPoolExecutor(max_workers=max_inspection_workers) as pool:
         inspections = {
-            pool.submit(inspect_candidate, candidate): candidate
+            pool.submit(inspect_candidate, candidate, quiet): candidate
             for candidate in unique_candidates.values()
         }
         for index, future in enumerate(as_completed(inspections), 1):
             candidate = inspections[future]
-            if index == 1 or index % 10 == 0 or index == len(inspections):
+            if not quiet and (index == 1 or index % 10 == 0 or index == len(inspections)):
                 print(f"Inspected {index}/{len(inspections)} candidates...")
             try:
                 result = future.result()
             except WORKER_EXCEPTIONS as error:
-                print(f"[{candidate.site}] inspection failed: {error}")
+                if not quiet:
+                    print(f"[{candidate.site}] inspection failed: {error}")
                 extraction_failures += 1
                 continue
             if not result:
@@ -709,25 +831,29 @@ def search(
             )
             if rejection_reason is None:
                 results.append(result)
-                quality = f"{result.max_height}p" if result.max_height else "unknown quality"
-                print(f"Match found: {result.title} ({quality})")
-                print(f"Preview: {result.url}")
+                if not quiet:
+                    quality = f"{result.max_height}p" if result.max_height else "unknown quality"
+                    print(f"Match found: {result.title} ({quality})")
+                    print(f"Preview: {result.url}")
             else:
                 rejection_counts[rejection_reason] = rejection_counts.get(rejection_reason, 0) + 1
     filtered_results = sum(rejection_counts.values())
     rejection_summary = ", ".join(
         f"{count} {reason}" for reason, count in sorted(rejection_counts.items())
     ) or "none"
-    print(
-        f"Inspection summary: {len(results)} matched, "
-        f"{filtered_results} filtered ({rejection_summary}), "
-        f"{extraction_failures} unavailable."
-    )
-    if not results and filtered_results:
-        print("Active settings removed every inspected result:")
-        print(f"  Include filters: {filters or '(none)'}")
-        print(f"  Exclusions: {excludes or '(none)'}")
-        print(f"  Minimum views: {min_views}")
+    if not quiet:
+        print(
+            f"Inspection summary: {len(results)} matched, "
+            f"{filtered_results} filtered ({rejection_summary}), "
+            f"{extraction_failures} unavailable."
+        )
+        if not results and filtered_results:
+            print("Active settings removed every inspected result:")
+            print(f"  Include filters: {filters or '(none)'}")
+            print(f"  Exclusions: {excludes or '(none)'}")
+            print(f"  Minimum views: {min_views}")
+    if progress is not None:
+        progress(ProgressEvent("rank", "Ranking results", completed=2, total=3))
     return deduplicate(results, query)
 
 

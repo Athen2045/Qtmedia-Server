@@ -9,8 +9,8 @@ from ..config import DOWNLOAD_ROOT, ensure_runtime_directories
 from ..net import http_client
 from ..search.engine import adapter_for_host, impersonate_for_url, is_video_candidate
 from ..sources.pmvhaven import fetch_metadata, is_pmvhaven_url
-from .control import DownloadCancellation, DownloadCancelled
-from .transfer import common_ydl_options
+from .control import DownloadCancellation, DownloadCancelled, DownloadProgressCallback
+from .transfer import download_ydl_options
 
 # Optional proxy configuration, set via the PRIVATE_SEARCH_PROXY env var.
 # Leave unset to connect directly.
@@ -20,7 +20,7 @@ ensure_runtime_directories()
 OUTPUT_FOLDER = str(DOWNLOAD_ROOT)
 
 
-def is_direct_video_url(video_url):
+def is_direct_video_url(video_url: str) -> bool:
     """Reject site homepages and known non-video URLs before yt-dlp runs.
 
     Delegates to the same SiteAdapter rules the search pipeline uses (see
@@ -41,9 +41,9 @@ def is_direct_video_url(video_url):
     return True
 
 
-def build_ydl_options(video_url=None):
+def build_ydl_options(video_url: str | None = None) -> dict[str, object]:
     options = {
-        **common_ydl_options(),
+        **download_ydl_options(),
         "format": "bestvideo+bestaudio/best",
         "noplaylist": True,
         "merge_output_format": "mp4",
@@ -68,7 +68,10 @@ def build_ydl_options(video_url=None):
     return options
 
 
-def download_video(video_url, progress=None) -> bool:
+def download_video(
+    video_url: str,
+    progress: DownloadProgressCallback | None = None,
+) -> bool:
     if not is_direct_video_url(video_url):
         print(f"Skipping non-video URL: {video_url}")
         return False

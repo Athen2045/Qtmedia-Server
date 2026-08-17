@@ -140,7 +140,15 @@ def test_insightface_settings_default_to_isolated_worker_python(monkeypatch):
 
     settings = InsightFaceSettings.from_environment()
 
-    assert settings.python == config.PROJECT_ROOT / "Update" / "insightface" / ".venv" / "Scripts" / "python.exe"
+    assert settings.python == (
+        config.PROJECT_ROOT
+        / "var"
+        / "tools"
+        / "insightface"
+        / ".venv"
+        / "Scripts"
+        / "python.exe"
+    )
 
 
 def test_insightface_adapter_runs_json_worker(monkeypatch, tmp_path: Path):

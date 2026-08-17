@@ -5,12 +5,14 @@ from types import SimpleNamespace
 
 import pytest
 
+from private_search import config
 from private_search.ai.actions import AgentAction
 from private_search.osint.blackbird import (
     BlackbirdAdapter,
     BlackbirdExecutionError,
     BlackbirdSettings,
 )
+from private_search.progress import ProgressEvent
 
 
 def username_action(username: str = "alice") -> AgentAction:
@@ -54,8 +56,6 @@ def test_blackbird_adapter_runs_username_worker_in_isolated_directory(
 ):
     root = tmp_path / "blackbird"
     root.mkdir()
-    worker = root / "theia_worker.py"
-    worker.write_text("# fixture", encoding="utf-8")
     python = tmp_path / "python.exe"
     python.write_text("", encoding="utf-8")
     calls: list[tuple[list[str], dict[str, object], Path, int, dict[str, str] | None]] = []
@@ -115,7 +115,7 @@ def test_blackbird_adapter_runs_username_worker_in_isolated_directory(
         }
     ]
     command, request, _, timeout_seconds, env = calls[0]
-    assert command == [str(python), str(worker)]
+    assert command == [str(python), str(config.BLACKBIRD_WORKER_PATH)]
     assert request == {
         "operation": "username",
         "value": "alice",
@@ -125,6 +125,8 @@ def test_blackbird_adapter_runs_username_worker_in_isolated_directory(
     assert env is not None
     assert env["PRIVATE_SEARCH_BLACKBIRD_THREADS"] == "7"
     assert env["PRIVATE_SEARCH_BLACKBIRD_TIMEOUT"] == "9"
+    assert env["PRIVATE_SEARCH_BLACKBIRD_REQUEST_TIMEOUT"] == "15"
+    assert env["PRIVATE_SEARCH_BLACKBIRD_ROOT"] == str(root.resolve())
     assert env["PYTHONIOENCODING"] == "utf-8"
     assert env["PYTHONUTF8"] == "1"
 
@@ -132,14 +134,12 @@ def test_blackbird_adapter_runs_username_worker_in_isolated_directory(
 def test_blackbird_adapter_uses_email_operation(monkeypatch, tmp_path: Path):
     root = tmp_path / "blackbird"
     root.mkdir()
-    worker = root / "theia_worker.py"
-    worker.write_text("# fixture", encoding="utf-8")
     python = tmp_path / "python.exe"
     python.write_text("", encoding="utf-8")
     requests: list[dict[str, object]] = []
 
     def fake_run_json_worker(command, request, **kwargs):
-        assert command == [str(python), str(worker)]
+        assert command == [str(python), str(config.BLACKBIRD_WORKER_PATH)]
         requests.append(request)
         return []
 
@@ -157,6 +157,41 @@ def test_blackbird_adapter_uses_email_operation(monkeypatch, tmp_path: Path):
             "value": "alice@example.com",
             "update_sites": True,
         }
+    ]
+
+
+def test_blackbird_adapter_streams_worker_progress(monkeypatch, tmp_path: Path):
+    root = tmp_path / "blackbird"
+    root.mkdir()
+    python = tmp_path / "python.exe"
+    python.write_text("", encoding="utf-8")
+    events: list[ProgressEvent] = []
+
+    def fake_streaming_worker(command, request, *, cwd, timeout_seconds, env, on_progress):
+        assert command == [str(python), str(config.BLACKBIRD_WORKER_PATH)]
+        assert request["operation"] == "username"
+        on_progress(ProgressEvent("scan", "Scanning GitHub", completed=1, total=2))
+        return []
+
+    monkeypatch.setattr(
+        "private_search.osint.blackbird.run_streaming_json_worker",
+        fake_streaming_worker,
+    )
+    adapter = BlackbirdAdapter(BlackbirdSettings(root=root, python=python, timeout_seconds=5))
+
+    assert adapter(username_action(), progress=events.append) == []
+    assert events == [
+        ProgressEvent("prepare", "Preparing", completed=0, total=4),
+        ProgressEvent("connect", "Connecting to Blackbird", completed=1, total=4),
+        ProgressEvent("scan", "Scanning configured sites", completed=2, total=4),
+        ProgressEvent(
+            "scan",
+            "Scanning configured sites — Scanning GitHub",
+            completed=2,
+            total=4,
+        ),
+        ProgressEvent("process", "Processing results", completed=3, total=4),
+        ProgressEvent("complete", "Complete", completed=4, total=4),
     ]
 
 

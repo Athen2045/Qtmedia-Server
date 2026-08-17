@@ -11,6 +11,7 @@ from private_search.search.engine import (
     SiteAdapter,
     VideoResult,
     adapter_for_host,
+    adapters_for_scope,
     canonical_url,
     deduplicate,
     filter_rejection_reason,
@@ -18,6 +19,7 @@ from private_search.search.engine import (
     inspect_candidate,
     is_duration_label,
     is_video_candidate,
+    parse_search_request,
     relevance_score,
     search_adapter,
     thumbnail_url_from_info,
@@ -78,6 +80,42 @@ def test_configured_adapters_have_expected_url_shapes():
     assert adapters["YouPorn"].make_search_urls("test title")[0].endswith(
         "/porntags/test-title/"
     )
+    assert adapters["PMVHaven"].make_search_urls("test title")[0].endswith(
+        "/search?q=test+title"
+    )
+    assert adapters["YouTube"].make_search_urls("test title")[0].endswith(
+        "/results?search_query=test+title"
+    )
+
+
+def test_porn_scope_selects_the_requested_adult_sources():
+    assert [adapter.name for adapter in adapters_for_scope("porn")] == [
+        "XHamster",
+        "XVideos",
+        "YouJizz",
+        "SpankBang",
+        "TNAFlix",
+        "PMVHaven",
+        "YouPorn",
+    ]
+
+
+def test_youtube_scope_selects_only_youtube():
+    assert [adapter.name for adapter in adapters_for_scope("YOUTUBE")] == ["YouTube"]
+
+
+def test_search_request_extracts_quoted_query_and_porn_scope():
+    request = parse_search_request("Search porn 'Bimbo Pmv'", "wrong model query")
+
+    assert request.scope == "porn"
+    assert request.query == "Bimbo Pmv"
+
+
+def test_search_request_extracts_youtube_scope_case_insensitively():
+    request = parse_search_request("Search YOuTuBe 'L vs Epistein'", "wrong model query")
+
+    assert request.scope == "youtube"
+    assert request.query == "L vs Epistein"
 
 
 def test_deduplicate_keeps_highest_quality_result():
@@ -291,6 +329,7 @@ def test_successful_yt_dlp_extraction_skips_pmvhaven_api(tmp_path, monkeypatch):
         "yt_dlp",
         types.SimpleNamespace(YoutubeDL=FakeYDL, utils=types.SimpleNamespace(DownloadError=Exception)),
     )
+    monkeypatch.setattr(search_module, "ydl_options", lambda impersonate=None: {})
     search_module.init_cache()
 
     result = inspect_candidate(SearchCandidate("PMVHaven", "https://pmvhaven.test/video/1", "https://pmvhaven.test/video/1"))

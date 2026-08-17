@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 from private_search.osint.insightface import InsightFaceAdapter, InsightFaceSettings
+from private_search.progress import ProgressEvent
 
 
 class FakeSmartImage:
@@ -52,7 +53,7 @@ def test_face_assisted_search_merges_filters_deduplicates_and_cleans_crops(
                     "image_path": str((tmp_path / "library-a.jpg").resolve()),
                     "face_id": "match-a",
                     "match_face_number": 1,
-                    "score": 0.92,
+                    "score": 1.0000000013,
                 },
                 {
                     "face_number": 2,
@@ -109,8 +110,16 @@ def test_face_assisted_search_merges_filters_deduplicates_and_cleans_crops(
     results = adapter.analyze_and_search(image, smartimage=smartimage)
 
     assert smartimage.calls == [image.resolve(), crop_one.resolve(), crop_two.resolve()]
-    assert [result["kind"] for result in results] == ["local_face", "web_reverse", "web_reverse"]
-    assert results[0] == {
+    assert [result["kind"] for result in results] == [
+        "face_detection",
+        "face_detection",
+        "local_face",
+        "web_reverse",
+        "web_reverse",
+    ]
+    local_result = next(result for result in results if result["kind"] == "local_face")
+    web_results = [result for result in results if result["kind"] == "web_reverse"]
+    assert local_result == {
         "kind": "local_face",
         "provider": "CPUExecutionProvider",
         "model_version": "9.9.9:buffalo_l",
@@ -118,15 +127,15 @@ def test_face_assisted_search_merges_filters_deduplicates_and_cleans_crops(
         "image_path": str((tmp_path / "library-a.jpg").resolve()),
         "face_id": "match-a",
         "match_face_number": 1,
-        "confidence": 92.0,
+        "confidence": 100.0,
     }
-    assert "crop_path" not in results[0]
-    assert results[1]["url"] == "https://example.test/original"
-    assert results[1]["provenance"] == "original"
-    assert results[1]["confidence"] == 83.0
-    assert results[2]["url"] == "https://example.test/face-1"
-    assert results[2]["provenance"] == "face_crop"
-    assert results[2]["face_number"] == 1
+    assert "crop_path" not in local_result
+    assert web_results[0]["url"] == "https://example.test/original"
+    assert web_results[0]["provenance"] == "original"
+    assert web_results[0]["confidence"] == 83.0
+    assert web_results[1]["url"] == "https://example.test/face-1"
+    assert web_results[1]["provenance"] == "face_crop"
+    assert web_results[1]["face_number"] == 1
     assert not crop_one.exists()
     assert not crop_two.exists()
 
@@ -239,3 +248,46 @@ def test_insightface_adapter_builds_module_worker_launch_command(monkeypatch, tm
     expected_source_root = str((cwd / "src").resolve())
     assert pythonpath
     assert pythonpath.split(os.pathsep)[0] == expected_source_root
+
+
+def test_face_assisted_search_reports_staged_progress(monkeypatch, tmp_path: Path):
+    image = tmp_path / "query.jpg"
+    image.write_bytes(b"image")
+    adapter = InsightFaceAdapter(
+        InsightFaceSettings(
+            root=tmp_path / "insightface",
+            python=tmp_path / "python.exe",
+            image_root=tmp_path,
+            index_path=tmp_path / "face-index.sqlite",
+            crop_root=tmp_path,
+        )
+    )
+
+    def fake_analyze(image_path, *, operation="reverse", progress=None):
+        assert image_path == image.resolve()
+        assert operation == "reverse"
+        return {
+            "provider": "CPUExecutionProvider",
+            "model_version": "test:buffalo_l",
+            "faces": [],
+            "local_matches": [],
+            "crops": [],
+        }
+
+    monkeypatch.setattr(adapter, "_analyze_image", fake_analyze)
+    events: list[ProgressEvent] = []
+
+    adapter.analyze_and_search(
+        image,
+        smartimage=FakeSmartImage({image.resolve(): []}),
+        progress=events.append,
+    )
+
+    assert events == [
+        ProgressEvent("prepare", "Preparing", completed=0, total=5),
+        ProgressEvent("detect", "Detecting faces", completed=1, total=5),
+        ProgressEvent("upload", "Uploading image", completed=2, total=5),
+        ProgressEvent("query", "Querying engines (1/1)", completed=3, total=5),
+        ProgressEvent("process", "Processing results", completed=4, total=5),
+        ProgressEvent("complete", "Complete", completed=5, total=5),
+    ]

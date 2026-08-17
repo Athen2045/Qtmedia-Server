@@ -13,7 +13,10 @@ def normalize_score(value: object, *, source: str) -> float | None:
     if number is None:
         return None
 
-    score = number * 100.0 if abs(number) <= 1.0 else number
+    # Cosine similarity can exceed one by a few floating-point ulps (for
+    # example, 1.0000000013). Treat that as a unit-scale score so a perfect
+    # match is not misread as a 1% presentation score and filtered out.
+    score = number * 100.0 if abs(number) <= 1.0 + 1e-6 else number
     if score < 0.0:
         return 0.0
     if score > 100.0:
@@ -67,4 +70,3 @@ def _coerce_number(value: object) -> float | None:
     if not math.isfinite(number):
         return None
     return number
-

@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .. import config
+from ..progress import ProgressEvent
 from .confidence import filter_confident, normalize_score
+from .smartimage import SmartImageExecutionError
 from .worker import run_json_worker
 
 if TYPE_CHECKING:
@@ -52,34 +55,88 @@ class InsightFaceAdapter:
     def __init__(self, settings: InsightFaceSettings | None = None) -> None:
         self.settings = settings or InsightFaceSettings.from_environment()
 
-    def __call__(self, action: AgentAction) -> object:
+    def __call__(
+        self,
+        action: AgentAction,
+        *,
+        progress: Callable[[ProgressEvent], None] | None = None,
+    ) -> object:
         image_path = action.image_path
         if image_path is None:
             raise ValueError("image_path is required for InsightFace reverse search")
         from .smartimage import SmartImageAdapter
 
-        return self.analyze_and_search(Path(image_path), smartimage=SmartImageAdapter())
+        return self.analyze_and_search(
+            Path(image_path), smartimage=SmartImageAdapter(), progress=progress
+        )
 
     def analyze_and_search(
         self,
         image_path: Path,
         *,
         smartimage: SmartImageAdapter,
+        progress: Callable[[ProgressEvent], None] | None = None,
     ) -> list[dict[str, object]]:
         image = Path(image_path).expanduser().resolve()
-        payload = self._analyze_image(image, operation="reverse")
+        self._emit(progress, "prepare", "Preparing", completed=0, total=5)
+        self._emit(progress, "detect", "Detecting faces", completed=1, total=5)
+        if progress is None:
+            payload = self._analyze_image(image, operation="reverse")
+        else:
+            payload = self._analyze_image(image, operation="reverse", progress=progress)
         results: list[dict[str, object]] = []
         crop_paths = self._collect_crop_paths(payload)
 
         try:
+            results.extend(self._face_detection_results(payload))
             results.extend(self._local_results(payload))
-            results.extend(self._web_results(image, payload.get("faces", []), crop_paths, smartimage))
-            return filter_confident(results, minimum=75.0)
+            self._emit(progress, "upload", "Uploading image", completed=2, total=5)
+            try:
+                results.extend(
+                    self._web_results(
+                        image,
+                        payload.get("faces", []),
+                        crop_paths,
+                        smartimage,
+                        progress=progress,
+                    )
+                )
+            except SmartImageExecutionError as error:
+                results.append(
+                    {
+                        "kind": "reverse_search_error",
+                        "name": "SmartImage unavailable",
+                        "site": "SmartImage",
+                        "error": str(error),
+                    }
+                )
+            self._emit(
+                progress,
+                "process",
+                "Processing results",
+                completed=4,
+                total=5,
+            )
+            filtered = filter_confident(results, minimum=75.0)
+            self._emit(
+                progress,
+                "complete",
+                "Complete",
+                completed=5,
+                total=5,
+            )
+            return filtered
         finally:
             if not self.settings.keep_crops:
                 self._cleanup_crops(crop_paths)
 
-    def _analyze_image(self, image_path: Path, *, operation: str) -> dict[str, object]:
+    def _analyze_image(
+        self,
+        image_path: Path,
+        *,
+        operation: str,
+        progress: Callable[[ProgressEvent], None] | None = None,
+    ) -> dict[str, object]:
         request = {
             "operation": operation,
             "image_path": str(image_path.expanduser().resolve()),
@@ -138,11 +195,40 @@ class InsightFaceAdapter:
         return results
 
     @staticmethod
+    def _face_detection_results(payload: dict[str, object]) -> list[dict[str, object]]:
+        provider = payload.get("provider")
+        model_version = payload.get("model_version")
+        results: list[dict[str, object]] = []
+        faces = payload.get("faces", [])
+        if not isinstance(faces, list):
+            return results
+        for face in faces:
+            if not isinstance(face, dict):
+                continue
+            confidence = normalize_score(face.get("detection_score"), source="detection")
+            results.append(
+                {
+                    "kind": "face_detection",
+                    "name": f"Face {face.get('face_number', '?')} detected",
+                    "site": "InsightFace",
+                    "provider": provider,
+                    "model_version": model_version,
+                    "face_number": face.get("face_number"),
+                    "confidence": confidence,
+                    "crop_path": face.get("crop_path"),
+                    "url": "",
+                }
+            )
+        return results
+
+    @staticmethod
     def _web_results(
         image_path: Path,
         faces: object,
         crop_paths: list[Path],
         smartimage: SmartImageAdapter,
+        *,
+        progress: Callable[[ProgressEvent], None] | None = None,
     ) -> list[dict[str, object]]:
         queued: list[tuple[Path, str, int | None]] = [(image_path, "original", None)]
         face_items = faces if isinstance(faces, list) else []
@@ -159,8 +245,19 @@ class InsightFaceAdapter:
 
         seen_urls: set[str] = set()
         results: list[dict[str, object]] = []
-        for path, provenance, face_number in queued:
-            for row in smartimage.search_image(path):
+        total_queries = len(queued)
+        for index, (path, provenance, face_number) in enumerate(queued, 1):
+            if progress is not None:
+                progress(
+                    ProgressEvent(
+                        phase="query",
+                        message=f"Querying engines ({index}/{total_queries})",
+                        completed=3,
+                        total=5,
+                    )
+                )
+            rows = smartimage.search_image(path)
+            for row in rows:
                 url = str(row.get("url", "")).strip()
                 if not url or url in seen_urls:
                     continue
@@ -173,6 +270,26 @@ class InsightFaceAdapter:
                     result["face_number"] = face_number
                 results.append(result)
         return results
+
+    @staticmethod
+    def _emit(
+        progress: Callable[[ProgressEvent], None] | None,
+        phase: str,
+        message: str,
+        *,
+        completed: int,
+        total: int,
+    ) -> None:
+        if progress is None:
+            return
+        progress(
+            ProgressEvent(
+                phase=phase,
+                message=message,
+                completed=completed,
+                total=total,
+            )
+        )
 
     @staticmethod
     def _cleanup_crops(crop_paths: list[Path]) -> None:

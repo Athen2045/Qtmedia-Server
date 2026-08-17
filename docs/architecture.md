@@ -1,18 +1,19 @@
-# Architecture
+# THEIA Architecture
 
-The repository has one interactive AI chat shell, two scriptable console commands, and
+THEIA has one interactive AI chat shell, two scriptable console commands, and
 small modules organized by responsibility.
 
 ```text
-main.bat / main.py / python -m private_search
+theia / main.bat / main.py / python -m private_search
         |
         v
 src/private_search/
   app/
-    cli.py       Typer commands and legacy workflows
+    cli.py       scriptable Typer search/download commands
     chat_ui.py   Rich chatbot prompt and local commands
   osint/
     blackbird.py          isolated username/email worker adapter
+    blackbird_worker.py   bundled JSON worker entry point
     insightface.py        local face-analysis adapter and SmartImage merge
     insightface_worker.py JSON worker entry point for local embeddings/indexing
     smartimage.py         confirmation-gated published Rdx runner
@@ -48,9 +49,11 @@ var/
   runtime/       local llama.cpp binaries
 ```
 
-`main.bat` is the normal Windows entry point. New code should import the
-package modules or use the `private-search` and `private-download` console
-commands. The application layer depends on search and download engines, while
+`theia` is the public console entry point and `main.bat` is the normal Windows
+launcher. `theia-cli` exposes the scriptable search/download commands; `qt`,
+`private-search`, and `private-download` remain compatibility callbacks. New
+code should import the package modules or use those documented entry points.
+The application layer depends on search and download engines, while
 site adapters and HTTP transport remain behind focused interfaces.
 Site-specific scraping remains behind the `SiteAdapter` interface, allowing an
 adapter to change without changing the search pipeline.
@@ -62,7 +65,7 @@ private GitHub repository accidentally.
 Blackbird and InsightFace are intentionally separate worker seams. The main
 application chooses the action, validates inputs, and keeps the confirmation
 policy, but the heavy or high-risk dependencies live in isolated worker Python
-environments under `Update/blackbird/.venv` and `Update/insightface/.venv`.
+environments under `var/tools/blackbird/.venv` and `var/tools/insightface/.venv`.
 That keeps the main application venv free of the OSINT worker dependency stacks
 and reduces the chance of launching those workers with the wrong interpreter.
 
@@ -74,12 +77,14 @@ environment overrides from `.env.example`. It binds only to `127.0.0.1` by
 default, waits for `/health`, and terminates the child process when its context
 exits. Model/runtime binaries are intentionally ignored by Git.
 
-The local chat client sends non-thinking requests to `/v1/chat/completions`.
-The model can only return the validated action types defined by
-`private_search.ai.actions`; it cannot create shell commands or choose an
-executable path. Tool execution and confirmation prompts are separate layers
-consumed by `private_search.ai.chat`. The orchestrator maintains bounded
-history and returns a normalized `ChatTurnResult`; it no longer keeps mutable
+The local chat client sends requests to `/v1/chat/completions`.
+The first pass classifies the request against the validated action types defined
+by `private_search.ai.actions`. Ordinary conversation, coding, debugging,
+planning, and analysis then use a separate free-form response pass with
+thinking enabled; its reasoning field is discarded and hidden chain-of-thought
+is never shown. The model cannot execute shell commands or choose an executable
+path. Tool execution and confirmation prompts are separate layers consumed by
+`private_search.ai.chat`. The orchestrator maintains bounded history and returns a normalized `ChatTurnResult`; it no longer keeps mutable
 "active image" session state. `private_search.app.chat_ui` is the default Rich
 prompt layer. It starts and stops llama.cpp around the session, exposes only
 `/about`, `/help`, and `/quit`, and keeps the existing Typer commands available
@@ -95,12 +100,21 @@ the active model and safeguard summary; this persona layer does not grant the
 model shell, filesystem, or unrestricted tool access.
 
 Reverse-image search is a composite flow rather than one opaque tool call. The
-chat UI selects a local file from the project `image/` folder, InsightFace runs
+chat UI selects a local file from `var/images/`, InsightFace runs
 local face detection and embedding generation in the isolated worker, the
 worker refreshes and queries the local SQLite face index, and only then does
 the confirmed SmartImage adapter run web reverse-image searches for the
 original image and any aligned face crops. The merged result set is filtered by
 confidence before presentation.
+
+Confirmed external operations use a shared streaming progress seam. Workers
+keep one final JSON response on stdout and write lines prefixed with
+`THEIA_PROGRESS ` to stderr. Each event carries a phase and message and may
+carry an exact completed/total count. The parent drains stdout and stderr
+concurrently, forwards valid events to the Rich UI, and preserves ordinary
+stderr as failure diagnostics. Blackbird reports one event per completed site;
+InsightFace and SmartImage report staged local/upload/parse phases where an
+exact remote percentage is not available.
 
 This means the feature is not fully offline. Face embeddings, crop generation,
 and local index refresh/search happen on the local machine, but SmartImage and

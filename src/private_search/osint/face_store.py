@@ -351,6 +351,10 @@ class FaceIndex:
 
             self._connection.execute("DELETE FROM faces WHERE image_id = ?", (image_id,))
             if normalized_faces:
+                packed_faces = [
+                    (face, *_pack_embedding(face.embedding))
+                    for face in normalized_faces
+                ]
                 self._connection.executemany(
                     """
                     INSERT INTO faces(
@@ -367,11 +371,11 @@ class FaceIndex:
                             json.dumps(face.bbox),
                             json.dumps(face.landmarks),
                             face.crop_path.as_posix() if face.crop_path is not None else None,
-                            _pack_embedding(face.embedding)[0],
-                            _pack_embedding(face.embedding)[1],
+                            embedding_blob,
+                            embedding_dimension,
                             face.detection_score,
                         )
-                        for face in normalized_faces
+                        for face, embedding_blob, embedding_dimension in packed_faces
                     ],
                 )
             self._connection.execute(

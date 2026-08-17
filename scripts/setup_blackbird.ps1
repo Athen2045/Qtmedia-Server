@@ -69,9 +69,15 @@ function Invoke-Python {
 $scriptDir = Split-Path -Parent $PSCommandPath
 $projectRoot = (Resolve-Path (Join-Path $scriptDir "..")).Path
 $projectVenv = Join-Path $projectRoot ".venv"
-$blackbirdRoot = (Resolve-Path (Join-Path $projectRoot "Update\\blackbird")).Path
+$configuredBlackbirdRoot = $env:PRIVATE_SEARCH_BLACKBIRD_ROOT
+$blackbirdRoot = if ([string]::IsNullOrWhiteSpace($configuredBlackbirdRoot)) {
+    Join-Path $projectRoot "var\\tools\\blackbird"
+} else {
+    [System.IO.Path]::GetFullPath($configuredBlackbirdRoot)
+}
 $targetVenv = Join-Path $blackbirdRoot ".venv"
 $requirementsPath = Join-Path $blackbirdRoot "requirements.txt"
+$usernameDataPath = Join-Path $blackbirdRoot "data\wmn-data.json"
 $venvPython = Join-Path $targetVenv "Scripts\\python.exe"
 
 if (-not (Test-Path -LiteralPath $requirementsPath -PathType Leaf)) {
@@ -103,7 +109,14 @@ if ($LASTEXITCODE -ne 0) {
     throw "Blackbird requirements install failed."
 }
 
+if (-not (Test-Path -LiteralPath $usernameDataPath -PathType Leaf)) {
+    Write-Host "Downloading the initial WhatsMyName username database"
+    Invoke-WebRequest `
+        -Uri "https://raw.githubusercontent.com/WebBreacher/WhatsMyName/main/wmn-data.json" `
+        -OutFile $usernameDataPath
+}
+
 Write-Host ""
 Write-Host "Blackbird setup complete."
 Write-Host "Worker interpreter: $venvPython"
-Write-Host "Default worker policy keeps external list updates disabled unless PRIVATE_SEARCH_BLACKBIRD_UPDATE_SITES=1 is set explicitly."
+Write-Host "Initial username database is installed. External list updates remain disabled unless PRIVATE_SEARCH_BLACKBIRD_UPDATE_SITES=1 is set explicitly."

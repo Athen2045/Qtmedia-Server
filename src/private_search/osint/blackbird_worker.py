@@ -29,10 +29,26 @@ class WorkerInputError(ValueError):
 def main() -> int:
     try:
         request = _read_request(sys.stdin.read())
-        root = Path(__file__).resolve().parent
+        root = Path(
+            os.environ.get(
+                "PRIVATE_SEARCH_BLACKBIRD_ROOT",
+                str(Path(__file__).resolve().parent),
+            )
+        ).expanduser().resolve()
         runtime = _build_runtime(root=root, workdir=Path.cwd().resolve())
+        _emit_progress(
+            "prepare",
+            "Preparing Blackbird site database",
+            completed=0,
+            total=1,
+        )
         if request["update_sites"]:
             _ensure_check_updates()(runtime)
+        elif request["operation"] == "username" and not Path(runtime.USERNAME_LIST_PATH).is_file():
+            raise WorkerInputError(
+                "Blackbird username database is missing. Run setup_blackbird.ps1 "
+                "or set PRIVATE_SEARCH_BLACKBIRD_UPDATE_SITES=1 for one refresh."
+            )
         if request["operation"] == "username":
             runtime.currentUser = request["value"]
             results = _ensure_username_verifier()(request["value"], runtime)
@@ -40,6 +56,12 @@ def main() -> int:
             runtime.currentEmail = request["value"]
             results = _ensure_email_verifier()(request["value"], runtime)
         payload = _normalize_records(results, kind=request["operation"])
+        _emit_progress(
+            "complete",
+            f"Blackbird {request['operation']} search complete",
+            completed=1,
+            total=1,
+        )
         sys.stdout.write(
             json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         )
@@ -73,10 +95,11 @@ def _read_request(raw_text: str) -> dict[str, object]:
 
 
 def _build_runtime(*, root: Path, workdir: Path) -> SimpleNamespace:
-    timeout = int(os.environ.get("PRIVATE_SEARCH_BLACKBIRD_TIMEOUT", "300"))
+    operation_timeout = int(os.environ.get("PRIVATE_SEARCH_BLACKBIRD_TIMEOUT", "300"))
+    request_timeout = int(os.environ.get("PRIVATE_SEARCH_BLACKBIRD_REQUEST_TIMEOUT", "15"))
+    if operation_timeout < 1 or request_timeout < 1:
+        raise WorkerInputError("Blackbird timeouts must be at least 1 second")
     threads = int(os.environ.get("PRIVATE_SEARCH_BLACKBIRD_THREADS", "8"))
-    if timeout < 1:
-        raise WorkerInputError("Blackbird timeout must be at least 1 second")
     if threads < 1:
         raise WorkerInputError("Blackbird thread count must be at least 1")
 
@@ -94,7 +117,10 @@ def _build_runtime(*, root: Path, workdir: Path) -> SimpleNamespace:
         no_nsfw=False,
         proxy=None,
         verbose=False,
-        timeout=timeout,
+        # Keep individual sites responsive and reserve time for the worker to
+        # cancel pending requests before the parent process deadline.
+        timeout=request_timeout,
+        operation_timeout=max(1, operation_timeout - 10),
         dump=False,
         csv=False,
         pdf=False,
@@ -114,6 +140,26 @@ def _build_runtime(*, root: Path, workdir: Path) -> SimpleNamespace:
         dateRaw=now.strftime("%m_%d_%Y"),
         datePretty=now.strftime("%B %d, %Y"),
         userAgent="Mozilla/5.0 (compatible; Theia Blackbird Worker)",
+        emit_progress=_emit_progress,
+    )
+
+
+def _emit_progress(
+    phase: str,
+    message: str,
+    *,
+    completed: int | None = None,
+    total: int | None = None,
+) -> None:
+    event: dict[str, object] = {"phase": phase, "message": message}
+    if completed is not None:
+        event["completed"] = completed
+    if total is not None:
+        event["total"] = total
+    print(
+        "THEIA_PROGRESS " + json.dumps(event, ensure_ascii=False, separators=(",", ":")),
+        file=sys.stderr,
+        flush=True,
     )
 
 
@@ -167,7 +213,11 @@ def _validate_email(value: object) -> None:
 
 
 def _ensure_src_path() -> None:
-    src_root = Path(__file__).resolve().parent / "src"
+    configured_root = os.environ.get(
+        "PRIVATE_SEARCH_BLACKBIRD_ROOT",
+        str(Path(__file__).resolve().parent),
+    )
+    src_root = Path(configured_root).expanduser().resolve() / "src"
     src_path = str(src_root)
     if src_path not in sys.path:
         sys.path.insert(0, src_path)

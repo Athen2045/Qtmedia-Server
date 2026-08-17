@@ -78,10 +78,11 @@ def test_setup_scripts_use_quote_safe_python_version_probe(script_name: str) -> 
 def test_blackbird_defaults_use_isolated_worker_root_and_python() -> None:
     settings = config.BlackbirdRuntimeSettings.from_environment({})
 
-    assert settings.root == config.PROJECT_ROOT / "Update" / "blackbird"
+    assert settings.root == config.PROJECT_ROOT / "var" / "tools" / "blackbird"
     assert settings.python == settings.root / ".venv" / "Scripts" / "python.exe"
     assert settings.python != config.PROJECT_ROOT / ".venv" / "Scripts" / "python.exe"
     assert settings.timeout_seconds == 300
+    assert settings.request_timeout_seconds == 15
     assert settings.threads == 8
     assert settings.update_sites is False
 
@@ -92,6 +93,7 @@ def test_blackbird_allows_environment_overrides() -> None:
             "PRIVATE_SEARCH_BLACKBIRD_ROOT": "C:/tools/blackbird",
             "PRIVATE_SEARCH_BLACKBIRD_PYTHON": "C:/tools/blackbird/python.exe",
             "PRIVATE_SEARCH_BLACKBIRD_TIMEOUT": "41",
+            "PRIVATE_SEARCH_BLACKBIRD_REQUEST_TIMEOUT": "7",
             "PRIVATE_SEARCH_BLACKBIRD_THREADS": "6",
             "PRIVATE_SEARCH_BLACKBIRD_UPDATE_SITES": "1",
         }
@@ -100,6 +102,7 @@ def test_blackbird_allows_environment_overrides() -> None:
     assert settings.root == Path("C:/tools/blackbird")
     assert settings.python == Path("C:/tools/blackbird/python.exe")
     assert settings.timeout_seconds == 41
+    assert settings.request_timeout_seconds == 7
     assert settings.threads == 6
     assert settings.update_sites is True
 
@@ -108,11 +111,17 @@ def test_blackbird_allows_environment_overrides() -> None:
     ("name", "value", "message"),
     [
         ("PRIVATE_SEARCH_BLACKBIRD_TIMEOUT", "0", "at least 1 second"),
+        ("PRIVATE_SEARCH_BLACKBIRD_REQUEST_TIMEOUT", "0", "at least 1 second"),
         ("PRIVATE_SEARCH_BLACKBIRD_THREADS", "0", "at least 1"),
         (
             "PRIVATE_SEARCH_BLACKBIRD_TIMEOUT",
             "abc",
             "PRIVATE_SEARCH_BLACKBIRD_TIMEOUT must be an integer value",
+        ),
+        (
+            "PRIVATE_SEARCH_BLACKBIRD_REQUEST_TIMEOUT",
+            "abc",
+            "PRIVATE_SEARCH_BLACKBIRD_REQUEST_TIMEOUT must be an integer value",
         ),
         (
             "PRIVATE_SEARCH_BLACKBIRD_THREADS",
@@ -131,9 +140,9 @@ def test_blackbird_rejects_invalid_numeric_settings(
 def test_insightface_defaults_use_local_paths() -> None:
     settings = config.InsightFaceRuntimeSettings.from_environment({})
 
-    assert settings.root == config.PROJECT_ROOT / "Update" / "insightface"
+    assert settings.root == config.PROJECT_ROOT / "var" / "tools" / "insightface"
     assert settings.python == settings.root / ".venv" / "Scripts" / "python.exe"
-    assert settings.image_root == config.PROJECT_ROOT / "image"
+    assert settings.image_root == config.PROJECT_ROOT / "var" / "images"
     assert settings.index_path == config.FACE_INDEX_PATH
     assert settings.crop_root == config.FACE_CROP_ROOT
     assert settings.model_name == "buffalo_l"
@@ -196,5 +205,6 @@ def test_runtime_directories_include_face_index_parent() -> None:
 
     assert config.DOWNLOAD_ROOT in directories
     assert config.CACHE_ROOT in directories
+    assert config.IMAGE_ROOT in directories
     assert config.FACE_CROP_ROOT in directories
     assert config.FACE_INDEX_PATH.parent in directories

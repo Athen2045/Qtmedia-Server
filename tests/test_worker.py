@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
-from private_search.osint.worker import WorkerExecutionError, run_json_worker
+from private_search.osint.worker import (
+    WorkerExecutionError,
+    run_json_worker,
+    run_streaming_json_worker,
+)
 
 
 def test_run_json_worker_sends_json_request_and_parses_exactly_one_value(
@@ -138,3 +143,36 @@ def test_run_json_worker_reports_timeout(monkeypatch, tmp_path: Path):
 
     with pytest.raises(WorkerExecutionError, match="timed out"):
         run_json_worker(["worker.exe"], {}, cwd=tmp_path, timeout_seconds=11)
+
+
+def test_streaming_worker_parses_progress_and_preserves_final_json(tmp_path: Path):
+    events = []
+    code = (
+        "import sys; "
+        "sys.stderr.write('THEIA_PROGRESS {\\\"phase\\\":\\\"scan\\\",\\\"message\\\":\\\"Scanning\\\",\\\"completed\\\":2,\\\"total\\\":3}\\n'); "
+        "sys.stderr.write('diagnostic\\n'); sys.stderr.flush(); "
+        "print('{\\\"ok\\\":true}', flush=True)"
+    )
+
+    result = run_streaming_json_worker(
+        [sys.executable, "-c", code],
+        {},
+        cwd=tmp_path,
+        timeout_seconds=10,
+        on_progress=events.append,
+    )
+
+    assert result == {"ok": True}
+    assert len(events) == 1
+    assert events[0].phase == "scan"
+    assert events[0].completed == 2
+
+
+def test_streaming_worker_reports_timeout(tmp_path: Path):
+    with pytest.raises(WorkerExecutionError, match="timed out"):
+        run_streaming_json_worker(
+            [sys.executable, "-c", "import time; time.sleep(2)"],
+            {},
+            cwd=tmp_path,
+            timeout_seconds=1,
+        )
