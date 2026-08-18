@@ -75,6 +75,9 @@ def test_build_ydl_options_includes_resilient_transfer_policy(monkeypatch):
     monkeypatch.delenv("PRIVATE_SEARCH_HTTP_CHUNK_SIZE", raising=False)
     monkeypatch.delenv("PRIVATE_SEARCH_DOWNLOAD_TIMEOUT", raising=False)
     monkeypatch.delenv("PRIVATE_SEARCH_DOWNLOAD_RETRIES", raising=False)
+    monkeypatch.delenv("PRIVATE_SEARCH_YTDLP_JS_RUNTIME", raising=False)
+    monkeypatch.delenv("PRIVATE_SEARCH_YTDLP_JS_RUNTIME_PATH", raising=False)
+    monkeypatch.delenv("PRIVATE_SEARCH_YOUTUBE_PLAYER_CLIENTS", raising=False)
 
     options = downloader_module.build_ydl_options("https://www.xvideos.com/video123/title")
 
@@ -87,7 +90,32 @@ def test_build_ydl_options_includes_resilient_transfer_policy(monkeypatch):
     assert options["retry_sleep_functions"]["fragment"](n=3) == 6.0
     assert options["continuedl"] is True
     assert options["concurrent_fragment_downloads"] == 4
+    assert options["extractor_args"] == {"youtube": {"player_client": ["web_embedded"]}}
     assert "http_chunk_size" not in options
+
+
+def test_build_ydl_options_prefers_progressive_youtube_mp4(monkeypatch):
+    monkeypatch.setenv("PRIVATE_SEARCH_YTDLP_JS_RUNTIME", "none")
+
+    options = downloader_module.build_ydl_options("https://youtu.be/example")
+
+    assert options["format"] == (
+        "best[ext=mp4][protocol^=http]/best[protocol^=http]/"
+        "bestvideo+bestaudio/best"
+    )
+
+
+def test_build_ydl_options_uses_configured_js_runtime(monkeypatch):
+    monkeypatch.setenv("PRIVATE_SEARCH_YTDLP_JS_RUNTIME", "node")
+    monkeypatch.delenv("PRIVATE_SEARCH_YTDLP_JS_RUNTIME_PATH", raising=False)
+    monkeypatch.setenv("PRIVATE_SEARCH_YOUTUBE_PLAYER_CLIENTS", "web_embedded,default")
+
+    options = downloader_module.build_ydl_options("https://youtu.be/example")
+
+    assert options["js_runtimes"]["node"]["path"]
+    assert options["extractor_args"] == {
+        "youtube": {"player_client": ["web_embedded", "default"]}
+    }
 
 
 def test_build_ydl_options_allows_download_timeout_and_retry_overrides(monkeypatch):

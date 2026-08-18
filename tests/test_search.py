@@ -387,11 +387,15 @@ def test_impersonate_for_url_uses_the_hosting_adapters_profile():
     assert impersonate_for_url("https://unconfigured.example/video/1") is None
 
 
-def test_ydl_options_impersonates_every_request_not_just_the_generic_extractor():
-    """Site-specific extractors (YouPorn, TNAFlix) fetch their own webpages;
-    the old generic-only extractor_args left those unimpersonated."""
+def test_ydl_options_impersonates_every_request_not_just_the_generic_extractor(
+    monkeypatch,
+):
+    """Site-specific extractors still receive the shared YouTube safeguards."""
+    monkeypatch.delenv("PRIVATE_SEARCH_YOUTUBE_PLAYER_CLIENTS", raising=False)
     options = search_module.ydl_options("safari184")
-    assert "extractor_args" not in options
+    assert options["extractor_args"] == {
+        "youtube": {"player_client": ["web_embedded"]}
+    }
     if search_module.http_client.HAS_CURL_CFFI:
         assert str(options["impersonate"]) == "safari-18.4"
     else:

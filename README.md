@@ -76,6 +76,9 @@ external service.
 - Python 3.11 or newer.
 - FFmpeg, including `ffprobe`, available on `PATH` for reliable media
   inspection and stream merging.
+- Node.js 22+ or Deno 2.3+ on `PATH` for full YouTube extraction. THEIA
+  auto-detects an installed JavaScript runtime and installs the matching
+  `yt-dlp-ejs` challenge solver through the `yt-dlp[default]` dependency.
 - Network access to the sites and services you choose to query.
 
 On macOS, install FFmpeg with Homebrew:
@@ -92,6 +95,13 @@ winget install Gyan.FFmpeg.Shared
 
 Restart PowerShell after installation, then verify `ffmpeg -version` and
 `ffprobe -version` work.
+
+For YouTube downloads, verify `node --version` or `deno --version`. If the
+runtime is installed in a non-standard location, set
+`PRIVATE_SEARCH_YTDLP_JS_RUNTIME` and `PRIVATE_SEARCH_YTDLP_JS_RUNTIME_PATH`.
+THEIA defaults YouTube to the `web_embedded` player client and prefers a
+progressive MP4 fallback, avoiding the PO-token-sensitive `android_vr` formats
+when they are unavailable.
 
 ## Installation
 

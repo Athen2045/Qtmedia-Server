@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 
 from ..net import http_client
 
@@ -17,6 +18,30 @@ MAX_RETRY_SLEEP_SECONDS = 30.0
 DEFAULT_CONCURRENT_FRAGMENTS = 4
 MAX_CONCURRENT_FRAGMENTS = 8
 SIZE_PATTERN = re.compile(r"^(?P<value>\d+)\s*(?P<unit>[kmg])?b?$", re.IGNORECASE)
+
+
+def _yt_dlp_runtime_options() -> dict[str, object]:
+    """Select an installed JavaScript runtime for YouTube challenge solving."""
+    configured_name = os.getenv("PRIVATE_SEARCH_YTDLP_JS_RUNTIME", "").strip().casefold()
+    configured_path = os.getenv("PRIVATE_SEARCH_YTDLP_JS_RUNTIME_PATH", "").strip()
+    if configured_name in {"none", "off", "disabled"}:
+        return {"js_runtimes": {}}
+
+    candidates = (configured_name,) if configured_name else ("deno", "node", "bun", "quickjs")
+    for name in candidates:
+        if not name:
+            continue
+        runtime_path = configured_path or shutil.which(name)
+        if runtime_path:
+            return {"js_runtimes": {name: {"path": runtime_path}}}
+    return {}
+
+
+def _youtube_extractor_options() -> dict[str, object]:
+    """Prefer a YouTube client that does not require android_vr PO tokens."""
+    configured = os.getenv("PRIVATE_SEARCH_YOUTUBE_PLAYER_CLIENTS", "web_embedded")
+    clients = [item.strip() for item in configured.split(",") if item.strip()]
+    return {"youtube": {"player_client": clients}} if clients else {}
 
 
 def _configured_int(name: str, default: int, maximum: int | None = None) -> int:
@@ -64,6 +89,8 @@ def common_ydl_options(
             DEFAULT_CONCURRENT_FRAGMENTS,
             MAX_CONCURRENT_FRAGMENTS,
         ),
+        **_yt_dlp_runtime_options(),
+        "extractor_args": _youtube_extractor_options(),
     }
     if retry_sleep:
         options["retry_sleep_functions"] = {

@@ -25,6 +25,10 @@ reconstructing the earlier task history.
   same vector repeatedly.
 - Added typed download progress and cancellation callbacks. Every yt-dlp
   transfer keeps the cancellation hook attached.
+- Fixed current YouTube downloads by enabling yt-dlp EJS support, auto-detecting
+  Node/Deno/Bun/QuickJS, defaulting to the `web_embedded` client, and preferring
+  progressive MP4 when YouTube's `android_vr` formats require unavailable
+  PO-tokens.
 - Kept the public entry points small and explicit: `theia` for the interactive
   shell, `theia-cli` for scripted commands, and compatibility callbacks for
   `qt`, `private-search`, and `private-download`.
@@ -81,8 +85,10 @@ progress protocol.
 
 ## Validation already performed
 
-- `pytest -q`: 256 tests passed after the path relocation and reference-only
-  SmartImage test cleanup.
+- `pytest -q`: 258 tests passed after the path relocation, documentation
+  cleanup, and YouTube downloader fix.
+- The supplied YouTube URL was downloaded successfully as an 8.09 MiB,
+  105.6-second progressive MP4 after the fix.
 - Ruff passed for `src`, `tests`, `main.py`, and `benchmarks`.
 - Python compilation passed for the same maintained source paths.
 - Editable installation succeeded and generated the `theia`, `theia-cli`,
@@ -112,6 +118,8 @@ those files are intentionally not part of THEIA's project documentation.
 | `docs/research/2026-08-17-codebase-optimization.md` | Record of the dead-code removal, callback cleanup, face-index optimization, and verification from the codebase review. |
 | `docs/research/2026-08-17-firecrawl-theia-evaluation.md` | Evaluation of Firecrawl against THEIA's search, scraping, and reverse-image requirements. |
 | `docs/research/2026-08-17-theia-capability-performance-research.md` | Capability and performance review of local AI, OSINT, search, downloads, and worker execution. |
+| `docs/research/2026-08-18-theia-davidau-qwen35-9b-model-fit.md` | Model-fit assessment comparing DavidAU's Qwen3.5-9B candidate with THEIA's current runtime and hardware constraints. |
+| `docs/research/2026-08-18-theia-hauhaucs-qwen35-9b-vs-4b.md` | Evidence-based comparison of the HauhauCS Qwen3.5-9B candidate with THEIA's current 4B model. |
 
 ## Next handoff steps
 

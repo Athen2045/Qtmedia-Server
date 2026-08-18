@@ -44,7 +44,7 @@ def is_direct_video_url(video_url: str) -> bool:
 def build_ydl_options(video_url: str | None = None) -> dict[str, object]:
     options = {
         **download_ydl_options(),
-        "format": "bestvideo+bestaudio/best",
+        "format": _format_for_url(video_url),
         "noplaylist": True,
         "merge_output_format": "mp4",
         "outtmpl": os.path.join(OUTPUT_FOLDER, "%(title)s [%(id)s].%(ext)s"),
@@ -66,6 +66,14 @@ def build_ydl_options(video_url: str | None = None) -> dict[str, object]:
 
         options["impersonate"] = ImpersonateTarget.from_str(target)
     return options
+
+
+def _format_for_url(video_url: str | None) -> str:
+    """Prefer a progressive MP4 for YouTube's PO-token-sensitive clients."""
+    host = urlparse(video_url or "").netloc.casefold().removeprefix("www.")
+    if host in {"youtube.com", "youtu.be", "m.youtube.com"}:
+        return "best[ext=mp4][protocol^=http]/best[protocol^=http]/bestvideo+bestaudio/best"
+    return "bestvideo+bestaudio/best"
 
 
 def download_video(
