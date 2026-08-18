@@ -20,6 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pylint>=3.0", "pytest>=8.0", "ruff>=0.6"]
+impersonation = ["curl-cffi>=0.7"]
 
 [project.scripts]
 qt = "private_search.app.cli:app"

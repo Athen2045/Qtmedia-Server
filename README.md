@@ -23,6 +23,14 @@ video. Runtime data stays on the local machine.
   inspection and stream merging.
 - Network access to the sites and services you choose to query.
 
+The project installs its Python dependencies from `pyproject.toml`.
+Browser-impersonation support is optional; install it when a site rejects
+ordinary HTTP clients:
+
+```bash
+python -m pip install -e ".[impersonation]"
+```
+
 On macOS, install FFmpeg with Homebrew:
 
 ```bash
@@ -113,7 +121,9 @@ For sources that provide HLS or DASH fragments, downloads use four concurrent
 fragments by default. Adjust this conservatively with
 `PRIVATE_SEARCH_CONCURRENT_FRAGMENTS` (capped at 8). An optional
 `PRIVATE_SEARCH_HTTP_CHUNK_SIZE` such as `10M` enables yt-dlp HTTP chunking;
-leave it unset unless the source benefits from it.
+leave it unset unless the source benefits from it. When `curl-cffi` is
+installed, `PRIVATE_SEARCH_IMPERSONATE` selects the browser profile used for
+site requests; it defaults to `chrome131`.
 
 ## Search behavior
 
@@ -132,6 +142,13 @@ export LUSTPRESS_BASE_URL=http://localhost:3000
 private-search
 ```
 
+In Windows PowerShell, use:
+
+```powershell
+$env:LUSTPRESS_BASE_URL = "http://localhost:3000"
+private-search
+```
+
 Lustpress can supplement the built-in adapters for supported sites. It does not
 replace yt-dlp or the direct-link downloader. The service must be configured and
 running separately.
@@ -140,7 +157,9 @@ running separately.
 
 - `var/cache/search.sqlite3` stores inspection results.
 - `var/downloads/` stores downloaded media.
-- `.env.example` documents optional environment settings.
+- `.env.example` lists optional environment settings. The application does
+  not load `.env` files automatically; set variables in the shell before
+  starting the command.
 
 These paths are ignored by Git. Do not commit downloaded media, cookies,
 credentials, or cache databases.

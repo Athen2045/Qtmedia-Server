@@ -40,7 +40,7 @@ jobs:
         run: ruff check .
 
       - name: Compile Python sources
-        run: python -m compileall -q src tests search.py download.py
+        run: python -m compileall -q src tests main.py benchmarks
 
   test:
     name: Test (Python ${{ matrix.python-version }})
