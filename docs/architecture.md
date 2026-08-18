@@ -10,6 +10,11 @@ main.bat / main.py / python -m private_search
 src/private_search/
   app/
     cli.py       interactive menu and Typer commands
+  bot/           Telegram integration boundary; not wired to the CLI yet
+    handlers/    commands, messages, and callback queries
+    keyboards/   reply and inline keyboard builders
+    services/    bot orchestration and core-engine adapters
+    storage/     short-lived job metadata and cleanup boundaries
   search/
     engine.py    concurrent retrieval, inspection, filters and ranking
     quality.py   tokenization and relevance scoring
@@ -28,7 +33,12 @@ src/private_search/
 var/
   downloads/     downloaded media
   cache/         SQLite inspection cache
+  telegram_jobs/ temporary bot job directories (future runtime path)
 ```
+
+The future Telegram deployment files will live under `deploy/telegram/` and
+will run separately from the existing CLI entrypoints. The bot package is a
+boundary scaffold only; it does not change current CLI behavior.
 
 `main.bat` is the normal Windows entry point. New code should import the
 package modules or use the `private-search` and `private-download` console

@@ -10,11 +10,13 @@ __pycache__/
 # Local runtime data
 var/downloads/
 var/cache/
+var/telegram_jobs/
 *.sqlite3
 *.db
 
 # Superpowers subagent-driven-development workspaces
 .superpowers/
+.claude/
 
 # macOS and editor files
 .DS_Store
@@ -25,3 +27,7 @@ var/cache/
 .env
 .env.*
 !.env.example
+
+# Local agent context/state
+/agents.md
+/context.md
