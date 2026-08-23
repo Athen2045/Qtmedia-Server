@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the two REPL-style console scripts (`private-search`, `private-download`) with a single Typer-based CLI, `qt`, that has `qt search` and `qt download` subcommands with Rich table/progress-bar output, while keeping `private-search`/`private-download` installed as aliases into the same commands.
+**Goal:** Replace the two REPL-style console scripts (`qtmedia-search`, `qtmedia-download`) with a single Typer-based CLI, `qt`, that has `qt search` and `qt download` subcommands with Rich table/progress-bar output, while keeping `qtmedia-search`/`qtmedia-download` installed as aliases into the same commands.
 
-**Architecture:** A new `src/private_search/cli.py` module owns a `typer.Typer` app with two commands. `search.py` and `downloader.py` keep their existing search/inspection/download logic untouched (`search()`, `deduplicate()`, `inspect_direct_url()`, `download_video()`) except `download_video()` gains one optional parameter. The REPL menu loop in `search.py` (`run()`, `print_menu()`, `download_selected()`, `filter_menu()`, `exclude_menu()`, `print_results()`, the ANSI color constants) is deleted once `cli.py` replaces everything it did.
+**Architecture:** A new `Qtmedia/src/qtmedia/cli.py` module owns a `typer.Typer` app with two commands. `search.py` and `downloader.py` keep their existing search/inspection/download logic untouched (`search()`, `deduplicate()`, `inspect_direct_url()`, `download_video()`) except `download_video()` gains one optional parameter. The REPL menu loop in `search.py` (`run()`, `print_menu()`, `download_selected()`, `filter_menu()`, `exclude_menu()`, `print_results()`, the ANSI color constants) is deleted once `cli.py` replaces everything it did.
 
 **Tech Stack:** Typer (CLI parsing/help), Rich (tables, progress bars, prompts) — both new dependencies on top of the existing `requests`, `beautifulsoup4`, `yt-dlp` stack.
 
@@ -14,15 +14,15 @@
 - Add `typer>=0.12` and `rich>=13.7` to `[project.dependencies]` in `pyproject.toml`.
 - No change to `search()`, `deduplicate()`, `inspect_candidate()`, `inspect_direct_url()`, site adapters, or the SQLite inspection cache.
 - No change to `download_video()`'s existing behavior when called without the new `progress` parameter (default `None`).
-- `qt` is the sole new console-script; `private-search`/`private-download` remain installed but forward into the same Typer commands (no duplicated logic).
-- Root launcher scripts `search.py` and `download.py` (repo root) and `src/private_search/__main__.py` must keep working unmodified — they only ever call `search.main()` / `downloader.main()`.
+- `qt` is the sole new console-script; `qtmedia-search`/`qtmedia-download` remain installed but forward into the same Typer commands (no duplicated logic).
+- Root launcher scripts `search.py` and `download.py` (repo root) and `Qtmedia/src/qtmedia/__main__.py` must keep working unmodified — they only ever call `search.main()` / `downloader.main()`.
 
 ---
 
 ### Task 1: `download_video()` accepts an optional progress callback
 
 **Files:**
-- Modify: `src/private_search/downloader.py:69-120` (the `download_video` function)
+- Modify: `Qtmedia/src/qtmedia/downloader.py:69-120` (the `download_video` function)
 - Test: `tests/test_downloader.py`
 
 **Interfaces:**
@@ -37,8 +37,8 @@ Add to `tests/test_downloader.py`:
 import sys
 import types
 
-from private_search import downloader as downloader_module
-from private_search.downloader import download_video, is_direct_video_url
+from qtmedia import downloader as downloader_module
+from qtmedia.download.engine import download_video, is_direct_video_url
 
 
 class _FakeYDL:
@@ -110,7 +110,7 @@ Expected: `FAIL` — `download_video() got an unexpected keyword argument 'progr
 
 - [ ] **Step 3: Implement `progress` support**
 
-In `src/private_search/downloader.py`, change the `download_video` signature and hook wiring:
+In `Qtmedia/src/qtmedia/downloader.py`, change the `download_video` signature and hook wiring:
 
 ```python
 def download_video(video_url, progress=None):
@@ -181,7 +181,7 @@ Expected: `PASS` (all tests, including the pre-existing `is_direct_video_url` on
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/private_search/downloader.py tests/test_downloader.py
+git add Qtmedia/src/qtmedia/downloader.py tests/test_downloader.py
 git commit -m "feat: add optional progress callback to download_video"
 ```
 
@@ -190,7 +190,7 @@ git commit -m "feat: add optional progress callback to download_video"
 ### Task 2: `cli.py` skeleton with the `download` command
 
 **Files:**
-- Create: `src/private_search/cli.py`
+- Create: `Qtmedia/src/qtmedia/cli.py`
 - Modify: `pyproject.toml` (add `typer`/`rich` dependencies)
 - Test: `tests/test_cli.py` (new)
 
@@ -235,7 +235,7 @@ Create `tests/test_cli.py`:
 ```python
 from typer.testing import CliRunner
 
-from private_search import cli
+from qtmedia import cli
 
 runner = CliRunner()
 
@@ -260,11 +260,11 @@ def test_download_command_invokes_download_video_with_progress_callback(monkeypa
 - [ ] **Step 3: Run the test to verify it fails**
 
 Run: `pytest tests/test_cli.py -v`
-Expected: `FAIL` — `ModuleNotFoundError: No module named 'private_search.cli'`.
+Expected: `FAIL` — `ModuleNotFoundError: No module named 'qtmedia.app.cli'`.
 
 - [ ] **Step 4: Implement `cli.py`**
 
-Create `src/private_search/cli.py`:
+Create `Qtmedia/src/qtmedia/cli.py`:
 
 ```python
 """Typer + Rich CLI: ``qt search`` and ``qt download``."""
@@ -344,7 +344,7 @@ Expected: `PASS`.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add pyproject.toml src/private_search/cli.py tests/test_cli.py
+git add pyproject.toml Qtmedia/src/qtmedia/cli.py tests/test_cli.py
 git commit -m "feat: add qt CLI with download command"
 ```
 
@@ -353,7 +353,7 @@ git commit -m "feat: add qt CLI with download command"
 ### Task 3: `search` command with Rich table + download prompt
 
 **Files:**
-- Modify: `src/private_search/cli.py`
+- Modify: `Qtmedia/src/qtmedia/cli.py`
 - Test: `tests/test_cli.py`
 
 **Interfaces:**
@@ -365,7 +365,7 @@ git commit -m "feat: add qt CLI with download command"
 Add to `tests/test_cli.py`:
 
 ```python
-from private_search.search import VideoResult
+from qtmedia.search import VideoResult
 
 
 def _make_result(title="Sample Title", url="https://example.test/1", views=42, height=1080):
@@ -457,7 +457,7 @@ Expected: `FAIL` — `No such command 'search'.`
 
 - [ ] **Step 3: Implement the `search` command**
 
-Add to `src/private_search/cli.py` (new imports at the top, alongside the existing ones):
+Add to `Qtmedia/src/qtmedia/cli.py` (new imports at the top, alongside the existing ones):
 
 ```python
 from typing import Optional
@@ -543,7 +543,7 @@ Expected: `PASS`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/private_search/cli.py tests/test_cli.py
+git add Qtmedia/src/qtmedia/cli.py tests/test_cli.py
 git commit -m "feat: add qt search command with rich table and download prompt"
 ```
 
@@ -552,8 +552,8 @@ git commit -m "feat: add qt search command with rich table and download prompt"
 ### Task 4: Remove the old REPL, wire aliases and `pyproject.toml`
 
 **Files:**
-- Modify: `src/private_search/search.py` (delete REPL-only code, replace `main()`)
-- Modify: `src/private_search/downloader.py` (replace `main()`)
+- Modify: `Qtmedia/src/qtmedia/search.py` (delete REPL-only code, replace `main()`)
+- Modify: `Qtmedia/src/qtmedia/downloader.py` (replace `main()`)
 - Modify: `pyproject.toml` (`[project.scripts]`)
 - Test: `tests/test_cli.py`
 
@@ -567,7 +567,7 @@ Add to `tests/test_cli.py`:
 
 ```python
 def test_run_search_alias_forwards_argv_to_search_command(monkeypatch):
-    monkeypatch.setattr(sys, "argv", ["private-search", "some title", "--min-views", "5"])
+    monkeypatch.setattr(sys, "argv", ["qtmedia-search", "some title", "--min-views", "5"])
     calls = []
 
     def fake_search(query, filters, excludes, min_views):
@@ -584,7 +584,7 @@ def test_run_search_alias_forwards_argv_to_search_command(monkeypatch):
 
 
 def test_run_download_alias_forwards_argv_to_download_command(monkeypatch):
-    monkeypatch.setattr(sys, "argv", ["private-download", "https://example.test/video"])
+    monkeypatch.setattr(sys, "argv", ["qtmedia-download", "https://example.test/video"])
     calls = []
     monkeypatch.setattr(cli.downloader, "download_video", lambda url, progress=None: calls.append(url))
 
@@ -604,7 +604,7 @@ Expected: `FAIL` — `SystemExit` not raised (or search/download not invoked), s
 
 - [ ] **Step 3: Delete the REPL-only code from `search.py`**
 
-In `src/private_search/search.py`, delete these top-level definitions entirely (search by name — line numbers shift as you go):
+In `Qtmedia/src/qtmedia/search.py`, delete these top-level definitions entirely (search by name — line numbers shift as you go):
 
 - The ANSI color constants block: `RESET`, `BOLD`, `CYAN`, `GREEN`, `YELLOW`, `DIM`.
 - `print_results()`
@@ -627,11 +627,11 @@ def main() -> None:
         print("\nStopped by user.")
 ```
 
-Keep the `signal` import at the top of the file (it's still used here). Remove now-unused imports if any linter flags them (check with `ruff check src/private_search/search.py` after this step).
+Keep the `signal` import at the top of the file (it's still used here). Remove now-unused imports if any linter flags them (check with `ruff check Qtmedia/src/qtmedia/search.py` after this step).
 
 - [ ] **Step 4: Replace `main()` in `downloader.py`**
 
-In `src/private_search/downloader.py`, replace the existing `main()` function with:
+In `Qtmedia/src/qtmedia/downloader.py`, replace the existing `main()` function with:
 
 ```python
 def main() -> None:
@@ -649,17 +649,17 @@ Change:
 
 ```toml
 [project.scripts]
-private-search = "private_search.search:main"
-private-download = "private_search.downloader:main"
+qtmedia-search = "qtmedia.search.engine:main"
+qtmedia-download = "qtmedia.download.engine:main"
 ```
 
 to:
 
 ```toml
 [project.scripts]
-qt = "private_search.cli:app"
-private-search = "private_search.cli:run_search_alias"
-private-download = "private_search.cli:run_download_alias"
+qt = "qtmedia.app.cli:app"
+qtmedia-search = "qtmedia.app.cli:run_search_alias"
+qtmedia-download = "qtmedia.app.cli:run_download_alias"
 ```
 
 Reinstall so the console scripts refresh:
@@ -693,8 +693,8 @@ Expected: Typer's auto-generated help text for each, no tracebacks.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add src/private_search/search.py src/private_search/downloader.py pyproject.toml tests/test_cli.py
-git commit -m "refactor: remove REPL menu, wire private-search/private-download as qt aliases"
+git add Qtmedia/src/qtmedia/search.py Qtmedia/src/qtmedia/downloader.py pyproject.toml tests/test_cli.py
+git commit -m "refactor: remove REPL menu, wire qtmedia-search/qtmedia-download as qt aliases"
 ```
 
 ---
@@ -730,8 +730,8 @@ python download.py
 The installed console commands are also available:
 
 \`\`\`bash
-private-search
-private-download
+qtmedia-search
+qtmedia-download
 \`\`\`
 
 The search interface prompts for a title, applies the configured filters, and
@@ -764,8 +764,8 @@ and forward into the same commands:
 \`\`\`bash
 python search.py "video title"
 python download.py https://example.com/video-page
-private-search "video title"
-private-download https://example.com/video-page
+qtmedia-search "video title"
+qtmedia-download https://example.com/video-page
 \`\`\`
 
 Downloads are saved under `var/downloads/`. Enter `q` and press Return when

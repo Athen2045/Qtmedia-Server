@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Keep `main.py`, `main.bat`, `qt`, `private-search`, and `private-download` working.
+- Keep `main.py`, `main.bat`, `qt`, `qtmedia-search`, and `qtmedia-download` working.
 - Delete only `search.py`, `download.py`, and `download.bat` as obsolete root launchers.
 - Do not delete `var/`, downloaded media, `.claude/`, caches, or local settings.
 - Preserve all tests and behavior unless an import path must change.

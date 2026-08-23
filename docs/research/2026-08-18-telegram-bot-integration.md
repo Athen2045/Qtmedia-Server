@@ -55,9 +55,9 @@ Telegram users.
 
 ## Fit with this repository
 
-- `src/private_search/search/engine.py` already exposes reusable `search()` and
+- `Qtmedia/src/qtmedia/search/engine.py` already exposes reusable `search()` and
   `inspect_direct_url()` functions.
-- `src/private_search/download/engine.py` exposes `download_video()`, but it
+- `Qtmedia/src/qtmedia/download/engine.py` exposes `download_video()`, but it
   currently writes to the global `var/downloads/` directory, prints status to
   stdout, and returns only a boolean. A bot adapter needs a structured result
   containing the output path, title, size, and error reason.

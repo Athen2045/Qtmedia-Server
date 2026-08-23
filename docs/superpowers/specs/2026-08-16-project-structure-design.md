@@ -1,27 +1,45 @@
-# Project Structure and Dead-File Cleanup Design
+# Project Structure and Application Separation Design
 
 ## Goal
 
-Reduce root-level clutter and group implementation modules by responsibility without deleting user data or supported package commands.
+Separate the terminal CLI and Telegram bot into clear, independently
+changeable application folders without deleting user data or silently changing
+their behavior.
 
 ## Structure
 
 ```text
-src/private_search/
-  app/       terminal CLI and menu
-  search/    retrieval engine and ranking
-  download/  download engine, cancellation, transfer policy
-  sources/   site-specific adapters
-  net/       HTTP client
-  config.py
+Qtmedia/
+  src/qtmedia/       CLI package
+  tests/             CLI tests
+  benchmarks/        CLI benchmarks
+  main.py            CLI launcher
+  main.bat           Windows CLI launcher
+  pyproject.toml     CLI dependencies and entry points
+
+QTmediaBot/
+  src/qtmedia_bot/   bot package and copied support modules
+  tests/             bot and deployment tests
+  deploy/telegram/   Docker and Local Bot API deployment
+  pyproject.toml     bot dependencies and entry point
 ```
 
-`main.py` and `main.bat` remain the only root interactive launchers. Package console commands continue to point at the new `app.cli` module. `python -m private_search` opens the same interactive menu.
+The CLI package is named `qtmedia`; the bot package is named `qtmedia_bot`.
+Transfer, network, and provider-support modules needed by both applications
+are copied into both package trees. Search, ranking, previews, and search
+cache remain CLI-only. Neither application imports the other application's
+runtime package.
 
-## Cleanup
+## Workspace documentation
 
-Remove the obsolete root compatibility launchers `search.py`, `download.py`, and `download.bat`. Keep downloaded media, `.claude` settings, caches, and the existing package console commands.
+Root `docs/` contains architecture, research, plans, specifications, and
+benchmark runbooks. Each application contains its own `README.md`, `agents.md`,
+`context.md`, and `instructions.md`. The root README is the contributor entry
+point and links to both applications.
 
 ## Verification
 
-Update all imports, tests, documentation, and compile commands. Run the complete pytest suite, Ruff, compileall, and a live `main.bat` smoke test.
+Update imports, tests, packaging metadata, Docker paths, CI commands, and
+documentation whenever an application path changes. Run each application's
+test and lint checks independently, compile both source trees, and validate the
+bot Compose file without printing secrets.

@@ -1,52 +1,60 @@
 # Architecture
 
-The repository has one interactive menu, two scriptable console commands, and
-small modules organized by responsibility.
+The workspace contains two independent Python applications. They use separate
+packages, entry points, tests, runtime directories, and packaging metadata.
 
 ```text
-main.bat / main.py / python -m private_search
-        |
-        v
-src/private_search/
-  app/
-    cli.py       interactive menu and Typer commands
-  bot/           Telegram integration boundary; not wired to the CLI yet
-    handlers/    commands, messages, and callback queries
-    keyboards/   reply and inline keyboard builders
-    services/    bot orchestration and core-engine adapters
-    storage/     short-lived job metadata and cleanup boundaries
-  search/
-    engine.py    concurrent retrieval, inspection, filters and ranking
-    quality.py   tokenization and relevance scoring
-    preview.py   bounded Kitty thumbnail cache and renderer
-  download/
-    engine.py    direct URL validation and yt-dlp downloads
-    control.py   cancellation primitives
-    transfer.py  shared transfer settings
-  sources/
-    lustpress.py / pmvhaven.py  site-specific adapters
-  net/
-    http_client.py              bounded HTTP transport
-  config.py                     stable runtime paths
-        |
-        v
-var/
-  downloads/     downloaded media
-  cache/         SQLite inspection cache
-  telegram_jobs/ temporary bot job directories (future runtime path)
+Qtmedia/
+├── src/qtmedia/
+│   ├── app/       CLI menu and Typer commands
+│   ├── search/    retrieval, ranking, cache, and preview
+│   ├── download/  direct URL validation, transfer, and cancellation
+│   ├── sources/   CLI source adapters
+│   ├── net/       bounded HTTP transport
+│   └── config.py  CLI runtime paths
+├── tests/
+├── benchmarks/
+└── var/
+    ├── downloads/  CLI downloaded media
+    └── cache/      CLI search cache
+
+QTmediaBot/
+├── src/qtmedia_bot/
+│   ├── bot/       Telegram application, handlers, services, and storage
+│   ├── download/  bot-owned copy of transfer support
+│   ├── sources/   bot-owned provider support
+│   └── net/       bot-owned copy of HTTP transport
+├── tests/
+├── var/
+│   ├── telegram_jobs/   short-lived native job media
+│   └── telegram_state/  short-lived native metadata
+└── deploy/telegram/
 ```
 
-The future Telegram deployment files will live under `deploy/telegram/` and
-will run separately from the existing CLI entrypoints. The bot package is a
-boundary scaffold only; it does not change current CLI behavior.
+The copied bot support modules are intentional. The bot does not import the
+CLI package, and the CLI does not import the bot package. This prevents a
+change to shared-looking transfer, network, or source code from silently
+changing the other application. Search, ranking, previews, and search cache
+remain CLI-only.
 
-`main.bat` is the normal Windows entry point. New code should import the
-package modules or use the `private-search` and `private-download` console
-commands. The application layer depends on search and download engines, while
-site adapters and HTTP transport remain behind focused interfaces.
-Site-specific scraping remains behind the `SiteAdapter` interface, allowing an
-adapter to change without changing the search pipeline.
+The CLI uses `main.py`, `main.bat`, `qt`, `qtmedia-search`, and
+`qtmedia-download`. The bot uses the `qtmedia-bot` entry point and the Docker
+Compose files under `QTmediaBot/deploy/telegram/`.
 
-Runtime data is excluded from version control. This keeps repository locality
-focused on implementation and prevents media or cache state from entering a
-private GitHub repository accidentally.
+The Telegram deployment runs the bot and a pinned Local Bot API image on a
+private network with no published API port. Both services mount the same named
+`telegram_jobs` volume at `/var/lib/qtmedia/telegram_jobs`. The delivery
+transport passes a validated local path to the Local Bot API, classifies
+ambiguous upload results without retrying, and removes temporary job data
+through the documented cleanup lifecycle.
+
+The Telegram application accepts direct media links only. Its inspection,
+quality selection, admission limits, callback ownership, privacy boundaries,
+and cleanup rules are defined in
+[`superpowers/specs/telegram-setup.md`](superpowers/specs/telegram-setup.md).
+The benchmark procedure is in
+[`benchmarks/telegram-milestone-6.md`](benchmarks/telegram-milestone-6.md).
+
+Runtime data is excluded from version control. Application-specific guidance
+and current state live in `Qtmedia/` and `QTmediaBot/` alongside the code they
+govern.

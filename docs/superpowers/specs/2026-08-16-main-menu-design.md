@@ -25,11 +25,11 @@ The menu loops until the user chooses `Q`. Invalid choices show a short correcti
 - Inspect validates a URL and uses yt-dlp metadata extraction without downloading. It displays title, site, view count, best quality, and canonical URL.
 - Help displays the common commands and explains that option 3 is metadata-only.
 - `main.bat` resolves its own directory and invokes `.venv\Scripts\python.exe main.py`. It fails with an actionable setup message if the virtual environment is absent.
-- Existing `qt`, `private-search`, `private-download`, `search.py`, and `download.py` compatibility paths remain available.
+- Existing `qt`, `qtmedia-search`, `qtmedia-download`, `search.py`, and `download.py` compatibility paths remain available.
 
 ## Architecture
 
-`main.py` becomes the root launcher and delegates to `private_search.cli.interactive_menu`. The menu is a thin presentation module over the existing deep search, inspection, and download interfaces; it does not duplicate network or yt-dlp logic.
+`main.py` becomes the root launcher and delegates to `qtmedia.app.cli.interactive_menu`. The menu is a thin presentation module over the existing deep search, inspection, and download interfaces; it does not duplicate network or yt-dlp logic.
 
 ## Testing
 

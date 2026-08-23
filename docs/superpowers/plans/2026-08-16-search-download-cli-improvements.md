@@ -20,11 +20,11 @@
 
 ## File Map
 
-- Create: `src/private_search/search_quality.py` — normalization, token-aware term matching, ranking, and candidate ordering.
-- Modify: `src/private_search/search.py` — use the quality module, fix fallback/cap behavior, overlap Lustpress searches, initialize cache once, and defer PMVHaven API fallback.
-- Modify: `src/private_search/downloader.py` — share retry/timeout policy and expose safe fragment/resume configuration.
-- Modify: `src/private_search/cli.py` — optional direct-url query, no-prompt direct inspection, validated selection, and consistent command errors.
-- Modify: `src/private_search/config.py` — typed environment-backed transfer settings if needed by downloader policy.
+- Create: `Qtmedia/src/qtmedia/search_quality.py` — normalization, token-aware term matching, ranking, and candidate ordering.
+- Modify: `Qtmedia/src/qtmedia/search.py` — use the quality module, fix fallback/cap behavior, overlap Lustpress searches, initialize cache once, and defer PMVHaven API fallback.
+- Modify: `Qtmedia/src/qtmedia/downloader.py` — share retry/timeout policy and expose safe fragment/resume configuration.
+- Modify: `Qtmedia/src/qtmedia/cli.py` — optional direct-url query, no-prompt direct inspection, validated selection, and consistent command errors.
+- Modify: `Qtmedia/src/qtmedia/config.py` — typed environment-backed transfer settings if needed by downloader policy.
 - Modify: `pyproject.toml` — add RapidFuzz dependency.
 - Modify: `tests/test_search.py` — search quality, fallback, cap, concurrency, and metadata fallback tests.
 - Modify: `tests/test_downloader.py` — downloader policy tests.
@@ -37,7 +37,7 @@
 ### Task 1: Add the search-quality module
 
 **Files:**
-- Create: `src/private_search/search_quality.py`
+- Create: `Qtmedia/src/qtmedia/search_quality.py`
 - Modify: `pyproject.toml`
 - Test: `tests/test_search.py`
 
@@ -70,7 +70,7 @@ def test_normalization_preserves_unicode_letters():
 
 Run: `.\.venv\Scripts\pytest.exe tests\test_search.py -k "term_matching or exact_phrase or typo_tolerance or normalization_preserves" -q`
 
-Expected: collection/import failure because `private_search.search_quality` does not yet exist.
+Expected: collection/import failure because `qtmedia.search_quality` does not yet exist.
 
 - [ ] **Step 3: Add the RapidFuzz dependency.**
 
@@ -89,14 +89,14 @@ Expected: PASS.
 - [ ] **Step 6: Commit the module and tests.**
 
 ```powershell
-git add pyproject.toml src/private_search/search_quality.py tests/test_search.py
+git add pyproject.toml Qtmedia/src/qtmedia/search_quality.py tests/test_search.py
 git commit -m "feat: add token-aware search ranking"
 ```
 
 ### Task 2: Use quality ranking during retrieval and inspection
 
 **Files:**
-- Modify: `src/private_search/search.py`
+- Modify: `Qtmedia/src/qtmedia/search.py`
 - Test: `tests/test_search.py`
 
 **Interfaces:**
@@ -161,16 +161,16 @@ Expected: all search tests pass; the benchmark prints ranking timings for a fixe
 - [ ] **Step 9: Commit the retrieval improvements.**
 
 ```powershell
-git add src/private_search/search.py tests/test_search.py benchmarks/benchmark_search_quality.py
+git add Qtmedia/src/qtmedia/search.py tests/test_search.py benchmarks/benchmark_search_quality.py
 git commit -m "perf: rank and filter search candidates before inspection"
 ```
 
 ### Task 3: Centralize and tune download transfer policy
 
 **Files:**
-- Modify: `src/private_search/downloader.py`
-- Modify: `src/private_search/search.py`
-- Modify: `src/private_search/config.py` if settings are placed there
+- Modify: `Qtmedia/src/qtmedia/downloader.py`
+- Modify: `Qtmedia/src/qtmedia/search.py`
+- Modify: `Qtmedia/src/qtmedia/config.py` if settings are placed there
 - Test: `tests/test_downloader.py`
 - Test: `tests/test_search.py`
 
@@ -201,14 +201,14 @@ Expected: PASS.
 - [ ] **Step 5: Commit the transfer policy.**
 
 ```powershell
-git add src/private_search/downloader.py src/private_search/search.py src/private_search/config.py tests/test_downloader.py tests/test_search.py
+git add Qtmedia/src/qtmedia/downloader.py Qtmedia/src/qtmedia/search.py Qtmedia/src/qtmedia/config.py tests/test_downloader.py tests/test_search.py
 git commit -m "perf: share resilient yt-dlp transfer settings"
 ```
 
 ### Task 4: Simplify CLI behavior and documentation
 
 **Files:**
-- Modify: `src/private_search/cli.py`
+- Modify: `Qtmedia/src/qtmedia/cli.py`
 - Modify: `tests/test_cli.py`
 - Modify: `README.md`
 
@@ -262,7 +262,7 @@ Expected: all commands pass. If the virtual-environment executable path contains
 - [ ] **Step 7: Commit the CLI and documentation changes.**
 
 ```powershell
-git add src/private_search/cli.py tests/test_cli.py README.md
+git add Qtmedia/src/qtmedia/cli.py tests/test_cli.py README.md
 git commit -m "feat: simplify search and download CLI guidance"
 ```
 

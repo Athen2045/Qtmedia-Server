@@ -10,12 +10,12 @@ progress bars). Two subcommands: `qt search` and `qt download`.
 
 Today the project installs two console scripts via `pyproject.toml`:
 
-- `private-search` -> `private_search.search:main` — an interactive REPL with
+- `qtmedia-search` -> `qtmedia.search.engine:main` — an interactive REPL with
   a numbered menu (search, set include filters, set excludes, inspect a
   direct URL, download a result by number, quit). Filters/excludes/min-views
   are session state set through menu prompts. Output is plain `print()` with
   hand-rolled ANSI color constants and an ASCII box-drawn dashboard.
-- `private-download` -> `private_search.downloader:main` — a simpler REPL
+- `qtmedia-download` -> `qtmedia.download.engine:main` — a simpler REPL
   that repeatedly prompts for a direct video URL and downloads it, printing
   plain-text progress lines.
 
@@ -35,7 +35,7 @@ Neither uses a CLI argument-parsing library; both are line-oriented REPLs.
 
 ## Architecture
 
-A new Typer app lives in `src/private_search/cli.py`:
+A new Typer app lives in `Qtmedia/src/qtmedia/cli.py`:
 
 ```
 qt search "<title>" [--filter TEXT]... [--exclude TEXT]... [--min-views N] [--direct-url URL]
@@ -46,14 +46,14 @@ qt download <url>
 
 ```toml
 [project.scripts]
-qt = "private_search.cli:app"
-private-search = "private_search.cli:run_search_alias"
-private-download = "private_search.cli:run_download_alias"
+qt = "qtmedia.app.cli:app"
+qtmedia-search = "qtmedia.app.cli:run_search_alias"
+qtmedia-download = "qtmedia.app.cli:run_download_alias"
 ```
 
 `run_search_alias()`/`run_download_alias()` are thin functions that invoke
 the same Typer `app` object with `["search"]` / `["download"]` prepended to
-`sys.argv[1:]`, so `private-search --filter x "title"` behaves identically
+`sys.argv[1:]`, so `qtmedia-search --filter x "title"` behaves identically
 to `qt search --filter x "title"`. There is exactly one implementation of
 each command's behavior.
 
@@ -68,7 +68,7 @@ keep working with the new flag-based interface.
 
 ## Components
 
-1. **`src/private_search/cli.py`** (new)
+1. **`Qtmedia/src/qtmedia/cli.py`** (new)
    - `app = typer.Typer(name="qt")`, a module-level `console = rich.console.Console()`.
    - `search` command: parses `query`, `--filter/-f` (multiple), `--exclude/-e`
      (multiple, defaults to `search.DEFAULT_EXCLUDES`), `--min-views`
@@ -91,7 +91,7 @@ keep working with the new flag-based interface.
    - `run_search_alias()` / `run_download_alias()`: call
      `app(["search", *sys.argv[1:]])` / `app(["download", *sys.argv[1:]])`.
 
-2. **`src/private_search/search.py`**
+2. **`Qtmedia/src/qtmedia/search.py`**
    - Keep `search()`, `deduplicate()`, `inspect_direct_url()`,
      `relevance_score()`, adapters, and caching unchanged.
    - Remove `print_menu()`, `run()`, `download_selected()`, the ANSI color
@@ -101,7 +101,7 @@ keep working with the new flag-based interface.
      the root `search.py` launcher script and for anything importing
      `search.main`).
 
-3. **`src/private_search/downloader.py`**
+3. **`Qtmedia/src/qtmedia/downloader.py`**
    - `download_video()` gains an optional `progress` parameter: a callable
      taking the same dict yt-dlp's progress hooks receive. Default value is
      a small function that reproduces today's `print()`-based lines, so

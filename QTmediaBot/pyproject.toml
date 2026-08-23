@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qtmedia-telegram-bot"
+version = "0.1.0"
+description = "QTmediaBot Telegram media downloader"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "requests>=2.31",
+  "yt-dlp==2026.8.19",
+  "yt-dlp-ejs>=0.8.0",
+  "python-dotenv>=1.0",
+  "python-telegram-bot==22.6",
+]
+
+[project.optional-dependencies]
+dev = ["pylint>=3.0", "pytest>=8.0", "ruff>=0.6"]
+impersonation = ["curl-cffi>=0.7"]
+
+[project.scripts]
+qtmedia-bot = "qtmedia_bot.bot.application:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.pylint.main]
+source-roots = ["src"]
+init-hook = "import sys; sys.path.insert(0, 'src')"

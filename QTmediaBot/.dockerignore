@@ -1,0 +1,14 @@
+.git/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.env
+.env.*
+var/
+tests/
+docs/
+deploy/telegram/README.md
+*.egg-info/

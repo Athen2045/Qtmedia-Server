@@ -1,0 +1,86 @@
+name: qtmedia-telegram
+
+services:
+  telegram-bot-api:
+    image: qtmedia/telegram-bot-api:10.2-timeout7200
+    build:
+      context: ../..
+      dockerfile: deploy/telegram/bot-api/Dockerfile
+      args:
+        TELEGRAM_BOT_API_COMMIT: adfd7f6a8e990272851777eeb3ae0def4216f161
+        TELEGRAM_BOT_API_IDLE_TIMEOUT_SECONDS: ${TELEGRAM_BOT_API_IDLE_TIMEOUT_SECONDS:-7200}
+    restart: unless-stopped
+    environment:
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:?TELEGRAM_API_ID is required}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:?TELEGRAM_API_HASH is required}
+      TELEGRAM_LOCAL: "1"
+      TELEGRAM_HTTP_IP_ADDRESS: 0.0.0.0
+      TELEGRAM_HTTP_PORT: "8081"
+    volumes:
+      - telegram_api_data:/var/lib/telegram-bot-api
+      - telegram_jobs:/var/lib/qtmedia/telegram_jobs
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          wget -T 2 -S --spider http://127.0.0.1:8081/ 2>&1 |
+          grep -q 'HTTP/1.1 404 Not Found'
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    networks:
+      - private
+
+  telegram-bot:
+    build:
+      context: ../..
+      dockerfile: deploy/telegram/Dockerfile
+    restart: unless-stopped
+    init: true
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
+      TELEGRAM_BASE_URL: http://telegram-bot-api:8081/bot
+      TELEGRAM_FILE_BASE_URL: http://telegram-bot-api:8081/file/bot
+      TELEGRAM_LOCAL_MODE: "1"
+      TELEGRAM_PRIVATE_CHATS_ONLY: ${TELEGRAM_PRIVATE_CHATS_ONLY:-1}
+      TELEGRAM_ALLOWED_USER_IDS: ${TELEGRAM_ALLOWED_USER_IDS:?TELEGRAM_ALLOWED_USER_IDS is required}
+      TELEGRAM_ALLOWED_DOMAINS: ${TELEGRAM_ALLOWED_DOMAINS:?TELEGRAM_ALLOWED_DOMAINS is required}
+      TELEGRAM_MAX_UPLOAD_BYTES: ${TELEGRAM_MAX_UPLOAD_BYTES:-1800000000}
+      TELEGRAM_MAX_DURATION_SECONDS: ${TELEGRAM_MAX_DURATION_SECONDS:-3600}
+      TELEGRAM_JOB_TTL_SECONDS: ${TELEGRAM_JOB_TTL_SECONDS:-3600}
+      TELEGRAM_JOB_ROOT: /var/lib/qtmedia/telegram_jobs
+      TELEGRAM_MAX_CONCURRENT_JOBS: ${TELEGRAM_MAX_CONCURRENT_JOBS:-1}
+      TELEGRAM_DISK_RESERVE_BYTES: ${TELEGRAM_DISK_RESERVE_BYTES:-500000000}
+      TELEGRAM_DOWNLOAD_TIMEOUT_SECONDS: ${TELEGRAM_DOWNLOAD_TIMEOUT_SECONDS:-7200}
+      TELEGRAM_UPLOAD_TIMEOUT_SECONDS: ${TELEGRAM_UPLOAD_TIMEOUT_SECONDS:-7200}
+      TELEGRAM_UNCONFIRMED_UPLOAD_RETENTION_SECONDS: ${TELEGRAM_UNCONFIRMED_UPLOAD_RETENTION_SECONDS:-900}
+      TELEGRAM_PROGRESS_UPDATE_SECONDS: ${TELEGRAM_PROGRESS_UPDATE_SECONDS:-10}
+      TELEGRAM_RATE_LIMIT_REQUESTS: ${TELEGRAM_RATE_LIMIT_REQUESTS:-5}
+      TELEGRAM_RATE_LIMIT_WINDOW_SECONDS: ${TELEGRAM_RATE_LIMIT_WINDOW_SECONDS:-60}
+      TELEGRAM_MAX_QUEUED_JOBS: ${TELEGRAM_MAX_QUEUED_JOBS:-2}
+      PRIVATE_SEARCH_YTDLP_JS_RUNTIME: ${PRIVATE_SEARCH_YTDLP_JS_RUNTIME:-node}
+      PRIVATE_SEARCH_YTDLP_FORCE_IPV4: ${PRIVATE_SEARCH_YTDLP_FORCE_IPV4:-0}
+      PRIVATE_SEARCH_CONCURRENT_FRAGMENTS: ${PRIVATE_SEARCH_CONCURRENT_FRAGMENTS:-8}
+      PRIVATE_SEARCH_HTTP_CHUNK_SIZE: ${PRIVATE_SEARCH_HTTP_CHUNK_SIZE:-}
+      PRIVATE_SEARCH_YTDLP_COOKIES_FROM_BROWSER: ${PRIVATE_SEARCH_YTDLP_COOKIES_FROM_BROWSER:-}
+      PRIVATE_SEARCH_YTDLP_COOKIES_BROWSER_PROFILE: ${PRIVATE_SEARCH_YTDLP_COOKIES_BROWSER_PROFILE:-}
+    volumes:
+      - telegram_jobs:/var/lib/qtmedia/telegram_jobs
+      # Firefox cookies are mounted read-only only into the bot container.
+      - type: bind
+        source: ${TELEGRAM_FIREFOX_PROFILE_ROOT:?TELEGRAM_FIREFOX_PROFILE_ROOT is required while Firefox cookies are enabled}
+        target: /home/qtmedia/.config/mozilla/firefox
+        read_only: true
+    depends_on:
+      telegram-bot-api:
+        condition: service_healthy
+    networks:
+      - private
+
+networks:
+  private:
+
+volumes:
+  telegram_api_data:
+  telegram_jobs:

@@ -17,9 +17,9 @@ Source policy: primary sources only (official library documentation, standards, 
 
 The repository currently has:
 
-- `src/private_search/net/http_client.py`: a shared Requests/curl-cffi session factory, retries, `stream=True`, 8 KiB bounded HTML reads, an 8 MiB response cap, and explicit response closing.
-- `src/private_search/search/engine.py`: concurrent searches across site adapters, a small candidate cap, title normalization, in-memory relevance scoring/deduplication, and SQLite caches.
-- `src/private_search/app/cli.py`: Typer subcommands (`search` and `download`), Rich tables/prompts/progress, and a direct-download path delegated to yt-dlp.
+- `Qtmedia/src/qtmedia/net/http_client.py`: a shared Requests/curl-cffi session factory, retries, `stream=True`, 8 KiB bounded HTML reads, an 8 MiB response cap, and explicit response closing.
+- `Qtmedia/src/qtmedia/search/engine.py`: concurrent searches across site adapters, a small candidate cap, title normalization, in-memory relevance scoring/deduplication, and SQLite caches.
+- `Qtmedia/src/qtmedia/app/cli.py`: Typer subcommands (`search` and `download`), Rich tables/prompts/progress, and a direct-download path delegated to yt-dlp.
 - Existing dated Markdown documents under `docs/`; no `docs/research/` convention existed, so this note uses the requested fallback path.
 
 The recommendations below are research findings and design guidance only. No code changes are included.
