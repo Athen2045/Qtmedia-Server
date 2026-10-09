@@ -18,13 +18,12 @@ desktop application uses Tauri, React/TypeScript, and the packaged CLI engine.
 ## Repository layout
 
 ```text
-Qtmedia/       Standalone CLI project, tests, docs, benchmarks, and runtime data
+Qtmedia/       Standalone CLI project, tests, benchmarks, and runtime data
 QtmediaApp/    Desktop application project and sidecar integration
-docs/          Architecture, research, plans, and runbooks
 ```
 
-See the [folder structure blueprint](docs/Project_Folders_Structure_Blueprint.md)
-for placement and naming conventions.
+Architecture notes, research, design specifications, and implementation plans
+are kept in a local `docs/` folder that is not tracked in this repository.
 
 ## Getting started
 
@@ -38,8 +37,8 @@ can be installed from `Qtmedia/` with an editable Python install. Follow
 2. Clone your fork and enter the workspace:
 
    ```bash
-   git clone https://github.com/<your-account>/qtmedia.git
-   cd qtmedia
+   git clone https://github.com/<your-account>/Qtmedia-Server.git
+   cd Qtmedia-Server
    ```
 
 3. Create a feature branch:

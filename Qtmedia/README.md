@@ -56,6 +56,6 @@ pytest -q
 python -m compileall -q src tests main.py benchmarks
 ```
 
-See [`../docs/architecture.md`](../docs/architecture.md) for the workspace
-architecture and [`instructions.md`](instructions.md) for the CLI contribution
-workflow. Application-specific documentation is indexed in [`docs/`](docs/).
+See [`instructions.md`](instructions.md) for the CLI contribution workflow.
+Workspace architecture notes and CLI design documents are kept in local
+`docs/` folders that are not tracked in this repository.

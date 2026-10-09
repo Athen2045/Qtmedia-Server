@@ -3,7 +3,7 @@
 **Last reviewed:** 2026-10-09
 
 **Current phase:** Bare-minimum operational build verified in the real release
-app on branch `codex/qtmedia-app` and ready for its first commit. The
+app on branch `Development` and ready for its first commit. The
 2026-10-09 pass found and fixed the cause of the "lost media engine": yt-dlp's
 console progress bar corrupted the JSONL stdout pipe on the first download.
 Home, Files, and Settings are active. Video and Music remain intentional
