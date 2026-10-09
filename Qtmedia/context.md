@@ -22,6 +22,12 @@
   challenge requests. The profile is configured by its actual directory path
   because yt-dlp could not resolve Firefox's friendly profile name. The `.env`
   file is ignored and contains no copied cookies.
+- 2026-10-09: Added `[tool.ruff] src = ["src"]` to `pyproject.toml` so Ruff
+  treats `qtmedia` as first-party. This clears the five I001 import-order
+  errors that had failed CI lint since 2026-08-23. Verified: `ruff check
+  Qtmedia` passes; pytest 120/121 locally, the one failure
+  (`test_ydl_options_uses_opt_in_firefox_cookies_for_spankbang`) is caused by
+  the local `.env` cookie-profile setting and does not occur in CI.
 
 ## Next concrete action
 
