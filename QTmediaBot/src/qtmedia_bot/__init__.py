@@ -1,1 +1,0 @@
-"""QTmedia Telegram bot package."""

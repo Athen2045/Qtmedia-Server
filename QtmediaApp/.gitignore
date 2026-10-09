@@ -1,0 +1,35 @@
+# Local environments and dependency caches
+.venv/
+frontend/node_modules/
+
+# Generated frontend output
+frontend/dist/
+frontend/*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+frontend/vitest.config.js
+frontend/vitest.config.d.ts
+
+# Python/PyInstaller output
+sidecar/build/
+sidecar/dist/
+sidecar/.probe-library/
+**/__pycache__/
+**/.pytest_cache/
+
+# Rust/Tauri output and prepared platform binaries
+src-tauri/target/
+src-tauri/gen/
+src-tauri/binaries/*.exe
+src-tauri/binaries/qtmedia-engine-*
+src-tauri/binaries/ffmpeg-*
+
+# Local visual verification captures
+artifacts/
+
+# Mobile/store icon variants generated from the desktop source icon
+src-tauri/icons/android/
+src-tauri/icons/ios/
+src-tauri/icons/Square*Logo.png
+src-tauri/icons/StoreLogo.png
+src-tauri/icons/64x64.png

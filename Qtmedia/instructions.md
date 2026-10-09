@@ -2,8 +2,8 @@
 
 ## Scope
 
-Qtmedia owns the terminal search and download workflow. Do not place Telegram
-handlers, bot deployment files, or bot-only storage under this folder.
+Qtmedia owns the terminal search and download workflow. Keep desktop-specific
+UI and packaging code outside this folder.
 
 ## File placement
 
@@ -20,7 +20,7 @@ handlers, bot deployment files, or bot-only storage under this folder.
 
 - Preserve the existing CLI commands and interactive menu behavior.
 - Keep secrets, cookies, downloaded media, and cache databases out of Git.
-- Make package changes in `qtmedia`, not in the bot package.
+- Make package changes in `qtmedia`, not in the desktop host or frontend.
 - Update root documentation when a public path or command changes.
 
 ## Verification

@@ -34,15 +34,14 @@ jobs:
       - name: Install development dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e "./Qtmedia[dev]" -e "./QTmediaBot[dev]"
+          python -m pip install -e "./Qtmedia[dev]"
 
       - name: Run Ruff
-        run: ruff check Qtmedia QTmediaBot
+        run: ruff check Qtmedia
 
       - name: Compile Python sources
         run: |
           python -m compileall -q Qtmedia/src Qtmedia/tests Qtmedia/main.py Qtmedia/benchmarks
-          python -m compileall -q QTmediaBot/src QTmediaBot/tests
 
   test:
     name: Test (Python ${{ matrix.python-version }})
@@ -64,9 +63,8 @@ jobs:
       - name: Install development dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e "./Qtmedia[dev]" -e "./QTmediaBot[dev]"
+          python -m pip install -e "./Qtmedia[dev]"
 
       - name: Run test suite
         run: |
           pytest -q Qtmedia/tests
-          pytest -q QTmediaBot/tests

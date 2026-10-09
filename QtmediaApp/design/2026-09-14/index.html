@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Qtmedia — design concepts</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #0b0b0d; color: #ededf1; }
+    body { max-width: 1440px; margin: auto; padding: 40px 24px; }
+    h1 { font-size: clamp(28px, 4vw, 48px); font-weight: 550; letter-spacing: -.04em; margin-bottom: 12px; }
+    p { color: #b3b3bf; line-height: 1.6; max-width: 850px; }
+    nav { display: flex; flex-wrap: wrap; gap: 12px; margin: 24px 0 48px; }
+    a { color: #c8bcff; text-underline-offset: 4px; }
+    nav a { padding: 12px 16px; border: 1px solid #34303d; border-radius: 8px; text-decoration: none; }
+    a:focus-visible { outline: 2px solid #c8bcff; outline-offset: 4px; }
+    section { margin: 0 0 64px; scroll-margin-top: 24px; }
+    h2 { font-size: 24px; font-weight: 550; }
+    img { display: block; width: 100%; height: auto; border: 1px solid #34303d; border-radius: 12px; box-sizing: border-box; }
+    small { color: #b3b3bf; }
+  </style>
+</head>
+<body>
+  <header>
+    <small>14 SEPTEMBER 2026 · DESIGN PROPOSAL</small>
+    <h1>Qtmedia. A clearer path from link to library.</h1>
+    <p>Three views of one proposed direction, preserving the dark canvas and serif identity.
+       These are static generated concepts with fictional sample media—not an updated build.</p>
+    <nav aria-label="Concepts"><a href="#home">01 / Home</a><a href="#formats">02 / Formats</a><a href="#files">03 / Files</a><a href="review.md">Read the source-backed review</a></nav>
+  </header>
+  <main>
+    <section id="home"><h2>01 / Home: make the next action obvious</h2><p>One link field, an explicit format lookup, supported-source help, and a shortcut to local storage.</p><a href="01-home.png"><img src="01-home.png" alt="Proposed dark Qtmedia Home screen with a serif gradient wordmark, link field, Find formats button, and navigation rail."></a></section>
+    <section id="formats"><h2>02 / Formats: choose, then download</h2><p>A downward-revealing panel groups real video qualities and MP3 in one selection flow. Inspection artwork is a proposed addition; all displayed media and format data here are illustrative.</p><a href="02-formats.png"><img src="02-formats.png" alt="Proposed inspected-media panel showing sample mountain artwork, radio rows for video resolutions and MP3, and a Download 1080p button." loading="lazy"></a></section>
+    <section id="files"><h2>03 / Files: keep the library and progress together</h2><p>Readable local files, filtering, and obvious open actions. The persistent transfer tray, saved quality labels, and per-file reveal action require implementation beyond the current bridge.</p><a href="03-files.png"><img src="03-files.png" alt="Proposed Files screen with five fictional media rows, local search and filters, and a persistent download-progress tray." loading="lazy"></a></section>
+  </main>
+  <footer><p>Implementation should retain the exact supplied SVGs, 88 px rail, bundled font, keyboard access, reduced motion, and a usable 960×640 layout. Generated spacing and icon details are approximate. No app code was changed.</p></footer>
+</body>
+</html>

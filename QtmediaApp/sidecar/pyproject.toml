@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qtmedia-engine"
+version = "0.1.0"
+description = "Private JSONL sidecar for the Qtmedia desktop application"
+requires-python = ">=3.11"
+dependencies = [
+  "Qtmedia",
+  "yt-dlp",
+]
+
+[project.scripts]
+qtmedia-engine = "qtmedia_engine.main:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
