@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Qtmedia QT monogram">
+  <defs>
+    <linearGradient id="brand" x1="80" y1="80" x2="432" y2="432" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4f6bff"/>
+      <stop offset="1" stop-color="#f15ac8"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="#090a0b"/>
+  <circle cx="220" cy="250" r="118" fill="none" stroke="url(#brand)" stroke-width="42"/>
+  <path d="M288 326 356 394" fill="none" stroke="url(#brand)" stroke-width="42" stroke-linecap="round"/>
+  <path d="M294 140h138M363 140v222" fill="none" stroke="url(#brand)" stroke-width="38" stroke-linecap="round"/>
+</svg>

@@ -10,7 +10,6 @@ __pycache__/
 # Local runtime data
 var/downloads/
 var/cache/
-var/telegram_jobs/
 *.sqlite3
 *.db
 **/build/
@@ -19,8 +18,6 @@ var/telegram_jobs/
 
 # Application-local runtime data
 Qtmedia/var/
-QTmediaBot/var/
-
 # Superpowers subagent-driven-development workspaces
 .superpowers/
 .claude/
@@ -28,8 +25,6 @@ QTmediaBot/var/
 # Documentation directories
 docs/
 Qtmedia/docs/
-QTmediaBot/docs/
-
 # macOS and editor files
 .DS_Store
 .idea/

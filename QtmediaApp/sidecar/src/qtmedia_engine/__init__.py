@@ -1,0 +1,1 @@
+"""Qtmedia desktop JSONL sidecar."""
