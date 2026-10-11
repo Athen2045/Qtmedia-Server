@@ -1,0 +1,4 @@
+# Test fixtures are compared byte for byte (release signatures, audio), so Git
+# must never convert their line endings on checkout.
+QtmediaApp/sidecar/tests/fixtures/** -text
+QtmediaApp/src-tauri/tests/fixtures/** -text

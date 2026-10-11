@@ -61,9 +61,11 @@ jobs:
           cache-dependency-path: Qtmedia/pyproject.toml
 
       - name: Install development dependencies
+        # The desktop service in the shared core also needs curl-cffi
+        # (impersonation) and mutagen (audio tags); same pins as the app job.
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e "./Qtmedia[dev]"
+          python -m pip install -e "./Qtmedia[dev]" "curl-cffi==0.16.3" "mutagen==1.48.1"
 
       - name: Compile Python sources
         run: |
