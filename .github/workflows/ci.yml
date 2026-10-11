@@ -3,8 +3,11 @@ name: CI
 on:
   push:
     branches: [main, Development]
+    paths-ignore: ["**/*.md", "docs/**"]
   pull_request:
     branches: [main, Development]
+    paths-ignore: ["**/*.md", "docs/**"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,12 +18,10 @@ concurrency:
 
 jobs:
   lint:
-    name: Lint (Python ${{ matrix.python-version }})
+    # Ruff's result does not depend on the interpreter, so one run is enough.
+    name: Lint
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.12", "3.13", "3.14"]
+    timeout-minutes: 10
     steps:
       - name: Check out source
         uses: actions/checkout@v5
@@ -28,8 +29,9 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.14"
           cache: pip
+          cache-dependency-path: Qtmedia/pyproject.toml
 
       - name: Install development dependencies
         run: |
@@ -39,13 +41,10 @@ jobs:
       - name: Run Ruff
         run: ruff check Qtmedia
 
-      - name: Compile Python sources
-        run: |
-          python -m compileall -q Qtmedia/src Qtmedia/tests Qtmedia/main.py Qtmedia/benchmarks
-
   test:
     name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -59,12 +58,108 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+          cache-dependency-path: Qtmedia/pyproject.toml
 
       - name: Install development dependencies
+        # The desktop service in the shared core also needs curl-cffi
+        # (impersonation) and mutagen (audio tags); same pins as the app job.
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e "./Qtmedia[dev]"
+          python -m pip install -e "./Qtmedia[dev]" "curl-cffi==0.16.3" "mutagen==1.48.1"
+
+      - name: Compile Python sources
+        run: |
+          python -m compileall -q Qtmedia/src Qtmedia/tests Qtmedia/main.py Qtmedia/benchmarks
 
       - name: Run test suite
         run: |
           pytest -q Qtmedia/tests
+
+  app:
+    # The desktop app ships for Windows only, so its engine, UI and Tauri host
+    # are checked on the platform they run on. One job: the Rust build embeds
+    # the built frontend.
+    name: Desktop app (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: |
+            Qtmedia/pyproject.toml
+            QtmediaApp/sidecar/pyproject.toml
+
+      - name: Install engine dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e "./Qtmedia[dev]" "curl-cffi==0.16.3" "mutagen==1.48.1"
+          # Dependencies come from the line above; never resolve them from PyPI here.
+          python -m pip install --no-deps -e ./QtmediaApp/sidecar
+
+      - name: Test media engine and desktop service
+        run: |
+          pytest -q QtmediaApp/sidecar/tests \
+            Qtmedia/tests/test_desktop_service.py \
+            Qtmedia/tests/test_desktop_network.py \
+            Qtmedia/tests/test_desktop_progress.py \
+            Qtmedia/tests/test_desktop_flac.py
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.20.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: QtmediaApp/frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: QtmediaApp/frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Test frontend
+        working-directory: QtmediaApp/frontend
+        run: pnpm test --run
+
+      - name: Type-check and build frontend
+        working-directory: QtmediaApp/frontend
+        run: pnpm build
+
+      - name: Set up Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt
+          rustup default stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: QtmediaApp/src-tauri
+
+      - name: Stand in for bundled tools
+        # tauri-build requires the externalBin files to exist; tests never run
+        # them, and the real binaries are untracked release-only builds.
+        run: |
+          mkdir -p QtmediaApp/src-tauri/binaries
+          for tool in qtmedia-engine ffmpeg ffprobe deno; do
+            touch "QtmediaApp/src-tauri/binaries/$tool-x86_64-pc-windows-msvc.exe"
+          done
+
+      - name: Check Rust formatting
+        working-directory: QtmediaApp/src-tauri
+        run: cargo fmt --check
+
+      - name: Test Tauri host
+        working-directory: QtmediaApp/src-tauri
+        run: cargo test --locked

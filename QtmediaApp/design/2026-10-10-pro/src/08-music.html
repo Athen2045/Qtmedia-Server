@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Music</title>
+<link rel="stylesheet" href="pro.css"><link rel="stylesheet" href="player.css">
+<style>
+  .content { padding: 20px 24px 0; overflow: hidden; }
+  h2 { margin-bottom: 12px; font: 600 17px/1.2 var(--display); letter-spacing: -.01em; }
+  .covers { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 18px; margin-bottom: 26px; }
+  .c { display: grid; gap: 6px; min-width: 0; }
+  .cover { position: relative; aspect-ratio: 1; border-radius: 6px; box-shadow: 0 0 0 1px var(--sep); }
+  .cover .pl { position: absolute; right: 8px; bottom: 8px; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: var(--accent); color: #fff; box-shadow: 0 4px 12px rgba(0,0,0,.4); opacity: 0; }
+  .cover .pl .ic { width: 15px; height: 15px; margin-left: 1px; }
+  .c.hover .pl { opacity: 1; }
+  .c strong { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .c span { margin-top: -5px; color: var(--text-3); font-size: 12px; }
+  .songs .tr { display: grid; grid-template-columns: 28px minmax(0, 1fr) 200px 60px; align-items: center; gap: 12px; height: 36px; padding: 0 10px; border-radius: 6px; font-size: 13px; }
+  .songs .th { height: 26px; color: var(--text-3); font-size: 11.5px; font-weight: 600; border-bottom: 1px solid var(--sep); border-radius: 0; }
+  .songs .tr:nth-child(odd):not(.th) { background: rgba(255,255,255,.022); }
+  .songs .playing { color: var(--accent-hover); }
+  .songs .n { color: var(--text-3); text-align: right; font-variant-numeric: tabular-nums; }
+  .songs .d { color: var(--text-3); text-align: right; font-variant-numeric: tabular-nums; }
+  .eq { display: inline-flex; align-items: flex-end; justify-content: flex-end; gap: 2px; height: 11px; }
+  .eq i { width: 2.5px; border-radius: 1px; background: var(--accent-hover); }
+</style></head>
+<body data-route="music">
+<div class="window">
+  <header class="toolbar">
+    <h1>Music</h1><span class="badge">Player coming soon</span><span class="grow"></span>
+    <div class="field" style="width:220px"><span data-i="search" class="ic-sm"></span>Search music</div>
+  </header>
+  <main class="content">
+    <h2>Recently Added</h2>
+    <div class="covers">
+      <div class="c"><div class="cover art a1"><span class="pl"><span data-i="play"></span></span></div><strong>Night Drive</strong><span>Nova Lane</span></div>
+      <div class="c hover"><div class="cover art a3"><span class="pl"><span data-i="play"></span></span></div><strong>Morning Loop</strong><span>The Paper Kites Club</span></div>
+      <div class="c"><div class="cover art a5"><span class="pl"><span data-i="play"></span></span></div><strong>Glasshouse</strong><span>Mira Sol</span></div>
+      <div class="c"><div class="cover art a2"><span class="pl"><span data-i="play"></span></span></div><strong>Harbour Lights (Live)</strong><span>Coastline</span></div>
+      <div class="c"><div class="cover art a4"><span class="pl"><span data-i="play"></span></span></div><strong>Field Recording No. 2</strong><span>Low Meadow</span></div>
+      <div class="c"><div class="cover art a6"><span class="pl"><span data-i="play"></span></span></div><strong>Afterglow</strong><span>Nova Lane</span></div>
+    </div>
+    <h2>Songs</h2>
+    <div class="songs">
+      <div class="tr th"><span class="n">#</span><span>Title</span><span>Artist</span><span class="d">Time</span></div>
+      <div class="tr playing"><span class="n"><span class="eq"><i style="height:5px"></i><i style="height:11px"></i><i style="height:7px"></i></span></span><span>Night Drive</span><span>Nova Lane</span><span class="d">4:01</span></div>
+      <div class="tr"><span class="n">2</span><span>Morning Loop</span><span class="t2">The Paper Kites Club</span><span class="d">2:48</span></div>
+      <div class="tr"><span class="n">3</span><span>Glasshouse</span><span class="t2">Mira Sol</span><span class="d">5:02</span></div>
+    </div>
+  </main>
+  <footer class="player">
+    <div class="now"><div class="art a1"></div><div><strong>Night Drive</strong><span>Nova Lane</span></div></div>
+    <div class="center">
+      <div class="ctl"><span data-i="shuffle" class="ic-sm"></span><span data-i="prev" class="ic-sm"></span><span class="main"><span data-i="pause"></span></span><span data-i="next" class="ic-sm"></span><span data-i="repeat" class="ic-sm on"></span></div>
+      <div class="time"><span>1:27</span><div class="bar"><i style="width:36%"></i></div><span>4:01</span></div>
+    </div>
+    <div class="right"><span data-i="queue" class="ic-sm"></span><span data-i="volume" class="ic-sm"></span><div class="bar"><i style="width:70%"></i></div></div>
+  </footer>
+</div>
+<script src="shell.js"></script>
+</body></html>

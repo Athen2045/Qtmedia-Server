@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Choose quality</title>
+<link rel="stylesheet" href="fluid.css">
+<link rel="stylesheet" href="home.css">
+<style>
+  .flow { padding-top: 18px; }
+  .topline { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .crumb { display: inline-flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; }
+  .crumb .ok { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: rgba(98,214,160,.14); color: var(--ok); }
+  .card { position: relative; overflow: hidden; padding: 28px; border-radius: 30px; background: var(--glass-strong); border: 1px solid var(--rim); box-shadow: 0 30px 80px rgba(0,0,0,.45); }
+  .card::before { content: ""; position: absolute; inset: -40% -10% auto 30%; height: 120%; background: radial-gradient(closest-side, rgba(130,112,255,.18), transparent); pointer-events: none; }
+  .media { position: relative; display: flex; align-items: center; gap: 18px; }
+  .media .tile { display: grid; place-items: center; width: 64px; height: 64px; border-radius: 20px; background: linear-gradient(135deg, rgba(111,123,255,.25), rgba(230,91,210,.18)); color: var(--violet-ink); }
+  .media h2 { font: 600 24px/1.2 var(--display); letter-spacing: -.02em; }
+  .media p { margin-top: 4px; color: var(--muted); font-size: 13.5px; }
+  .media p b { color: var(--text); font-weight: 600; }
+  .switch { position: relative; display: flex; justify-content: space-between; align-items: center; margin-top: 28px; }
+  .label { margin: 22px 0 12px; color: var(--subtle); font-size: 12.5px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 10px; }
+  .q { display: grid; gap: 0; min-width: 104px; padding: 12px 18px; border-radius: 18px; background: rgba(255,255,255,.04); border: 1px solid transparent; }
+  .q b { font: 600 18px/1.2 var(--display); letter-spacing: -.01em; }
+  .q span { color: var(--subtle); font-size: 12px; font-weight: 600; }
+  .q.hover { background: rgba(255,255,255,.07); }
+  .q.on { background: linear-gradient(var(--ink-3), var(--ink-3)) padding-box, var(--grad) border-box; box-shadow: 0 10px 30px rgba(130,112,255,.25); }
+  .q.on span { color: var(--violet-ink); }
+  .foot { display: flex; align-items: center; justify-content: space-between; margin-top: 30px; padding-top: 22px; border-top: 1px solid var(--rim); }
+  .dest { display: inline-flex; align-items: center; gap: 8px; color: var(--subtle); font-size: 13px; }
+  .dest b { color: var(--muted); font-weight: 600; }
+</style></head>
+<body data-route="home">
+<main class="stage">
+  <div class="flow">
+    <div class="topline">
+      <span class="crumb"><span class="ok"><span data-i="check" class="ic-sm"></span></span>Link checked · YouTube</span>
+      <span class="btn btn-soft"><span data-i="link" class="ic-sm"></span>New link</span>
+    </div>
+
+    <section class="card">
+      <div class="media">
+        <div class="tile"><span data-i="video" class="ic-lg"></span></div>
+        <div><h2>Harbour Lights - Live Session</h2><p><b>22:05</b> · 6 video qualities · audio available</p></div>
+      </div>
+
+      <div class="switch">
+        <div class="pills"><span class="on">Video</span><span>Audio only</span></div>
+        <span class="subtle" style="font-size:12.5px">Only qualities this link really has are shown</span>
+      </div>
+
+      <p class="label">Quality · MP4</p>
+      <div class="chips">
+        <div class="q"><b>4K</b><span>2160p</span></div>
+        <div class="q hover"><b>1440p</b><span>QHD</span></div>
+        <div class="q on"><b>1080p</b><span>Full HD</span></div>
+        <div class="q"><b>720p</b><span>HD</span></div>
+        <div class="q"><b>480p</b><span>SD</span></div>
+        <div class="q"><b>360p</b><span>Low</span></div>
+      </div>
+
+      <div class="foot">
+        <span class="dest"><span data-i="files" class="ic-sm"></span>Saves to <b>Library · Video</b></span>
+        <span class="btn btn-primary btn-lg"><span data-i="download" class="ic-sm"></span>Save 1080p video</span>
+      </div>
+    </section>
+  </div>
+</main>
+<script src="fluid.js"></script>
+</body></html>

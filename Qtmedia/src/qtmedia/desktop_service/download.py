@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import os
 import re
@@ -13,15 +14,21 @@ from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
-from ..download.transfer import common_ydl_options, javascript_runtime_options
+from ..download.transfer import common_ydl_options
 from ..net import http_client
-from ..search.engine import impersonate_for_url
+from .adapters import impersonate_for_url
+from .browser_cookies import site_ydl_options
 from .models import (
     DownloadProgress,
     DownloadResult,
     InspectedMedia,
     MediaLibrary,
 )
+from .network import new_session as network_session
+from .network import proxy_options
+from .runtime import javascript_runtime_options
+from .song_tags import write_song_tags
+from .ytdlp_errors import is_source_blocked, is_source_changed
 
 ProgressCallback = Callable[[DownloadProgress], None]
 INVALID_FILENAME = re.compile(r"[\\/:*?\"<>|\x00-\x1f]+")
@@ -44,20 +51,92 @@ def safe_stem(title: str, media_id: str) -> str:
     return f"{cleaned[:120]} [{media_id}]"
 
 
+# Postprocessors whose work is worth naming. MoveFiles (a rename) and the
+# thumbnail conversion (runs before the download) are instant and silent.
+POSTPROCESSOR_STAGES = {"Merger": "merging", "ExtractAudio": "converting"}
+SILENT_POSTPROCESSORS = frozenset({"MoveFiles", "ThumbnailsConvertor"})
+
+
+def stream_count(selector: str, kind: str) -> int:
+    """Streams yt-dlp downloads for a selector (``video+audio`` merges two)."""
+    if kind != "video":
+        return 1
+    return selector.split("/", 1)[0].count("+") + 1
+
+
+def _number(value: object) -> float | None:
+    return float(value) if isinstance(value, (int, float)) else None
+
+
+def _stream_name(info: object) -> str | None:
+    if not isinstance(info, dict):
+        return None
+    if info.get("vcodec") == "none":
+        return "audio"
+    if info.get("acodec") == "none":
+        return "video"
+    return None
+
+
 def _progress_hook(
+    progress: ProgressCallback,
+    cancel: threading.Event,
+    *,
+    parts: int = 1,
+) -> Callable[[dict[str, object]], None]:
+    # yt-dlp hides the other requested formats from each stream's hook, so
+    # streams are numbered in the order their files appear.
+    files: list[str] = []
+
+    def hook(status: dict[str, object]) -> None:
+        if cancel.is_set():
+            raise DesktopDownloadCancelled("cancelled")
+        if status.get("status") != "downloading":
+            return
+        filename = str(status.get("filename") or "")
+        if filename not in files:
+            files.append(filename)
+        part = min(files.index(filename) + 1, max(parts, 1))
+        downloaded = int(status.get("downloaded_bytes") or 0)
+        exact = _number(status.get("total_bytes"))
+        estimate = _number(status.get("total_bytes_estimate"))
+        fragment_index = _number(status.get("fragment_index"))
+        fragment_count = _number(status.get("fragment_count"))
+        if exact:
+            percent = downloaded * 100 / exact
+        elif fragment_count and fragment_index is not None:
+            # HLS size estimates jump around; fragments done is the real measure.
+            percent = fragment_index * 100 / fragment_count
+        elif estimate:
+            percent = downloaded * 100 / estimate
+        else:
+            percent = None
+        total = exact or estimate
+        progress(
+            DownloadProgress(
+                downloaded,
+                int(total) if total else None,
+                min(100.0, percent) if percent is not None else None,
+                stream=_stream_name(status.get("info_dict")) if parts > 1 else None,
+                part=part,
+                parts=max(parts, 1),
+            )
+        )
+
+    return hook
+
+
+def _postprocessor_hook(
     progress: ProgressCallback,
     cancel: threading.Event,
 ) -> Callable[[dict[str, object]], None]:
     def hook(status: dict[str, object]) -> None:
         if cancel.is_set():
             raise DesktopDownloadCancelled("cancelled")
-        if status.get("status") != "downloading":
+        name = str(status.get("postprocessor") or "")
+        if status.get("status") != "started" or name in SILENT_POSTPROCESSORS:
             return
-        downloaded = int(status.get("downloaded_bytes") or 0)
-        raw_total = status.get("total_bytes") or status.get("total_bytes_estimate")
-        total = int(raw_total) if isinstance(raw_total, (int, float)) else None
-        percent = min(100.0, downloaded * 100 / total) if total else None
-        progress(DownloadProgress(downloaded, total, percent))
+        progress(DownloadProgress.stage_only(POSTPROCESSOR_STAGES.get(name, "processing")))
 
     return hook
 
@@ -75,6 +154,7 @@ def build_download_options(
     options: dict[str, object] = {
         **common_ydl_options(),
         **javascript_runtime_options(),
+        **proxy_options(),
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
@@ -82,7 +162,10 @@ def build_download_options(
         "noprogress": True,
         "paths": {"home": str(library.temp), "temp": str(library.temp)},
         "outtmpl": str(library.temp / f"{stem}.%(ext)s"),
-        "progress_hooks": [_progress_hook(progress, cancel)],
+        "progress_hooks": [
+            _progress_hook(progress, cancel, parts=stream_count(selection.selector, kind))
+        ],
+        "postprocessor_hooks": [_postprocessor_hook(progress, cancel)],
         "extractor_retries": http_client.RETRY_ATTEMPTS,
     }
     bundled_ffmpeg = os.getenv("QTMEDIA_FFMPEG")
@@ -95,6 +178,19 @@ def build_download_options(
                 "merge_output_format": "mp4",
             }
         )
+    elif selection.extension == "flac":
+        # Cover art goes into the FLAC PICTURE block (yt-dlp uses mutagen).
+        options.update(
+            {
+                "format": selection.selector,
+                "writethumbnail": True,
+                "postprocessors": [
+                    {"key": "FFmpegExtractAudio", "preferredcodec": "flac"},
+                    {"key": "FFmpegThumbnailsConvertor", "format": "jpg", "when": "before_dl"},
+                    {"key": "EmbedThumbnail"},
+                ],
+            }
+        )
     else:
         options.update(
             {
@@ -103,19 +199,15 @@ def build_download_options(
                     {
                         "key": "FFmpegExtractAudio",
                         "preferredcodec": "mp3",
-                        "preferredquality": "192",
+                        # LAME V0 (VBR, ~245 kbps): the least added loss when
+                        # re-encoding a lossy stream to MP3.
+                        "preferredquality": "0",
                     }
                 ],
             }
         )
-    profile = impersonate_for_url(media.source_url)
-    target = http_client.ytdlp_impersonate_target(profile) if profile else None
-    if target:
-        from yt_dlp.networking.impersonate import (  # pylint: disable=import-outside-toplevel
-            ImpersonateTarget,
-        )
-
-        options["impersonate"] = ImpersonateTarget.from_str(target)
+    # Impersonation, and the user's Firefox cookies where opted in.
+    options.update(site_ydl_options(media.source_url))
     return options
 
 
@@ -147,7 +239,7 @@ def _validate_public_http_url(url: str) -> None:
 def _download_artwork(media: InspectedMedia, library: MediaLibrary, stem: str) -> str | None:
     if not media.thumbnail_url:
         return None
-    session = http_client.new_session(impersonate_for_url(media.source_url))
+    session = network_session(impersonate_for_url(media.source_url))
     current = media.thumbnail_url
     part = library.temp / f"{stem}.artwork.part"
     try:
@@ -243,16 +335,21 @@ def download_media(
                 error_code = ydl.download([source])
         except DesktopDownloadCancelled:
             raise
-        except Exception:
+        except Exception as error:
             # yt-dlp wraps the progress hook's cancellation in DownloadError.
             if cancel.is_set():
                 raise DesktopDownloadCancelled("cancelled") from None
+            if is_source_blocked(error):
+                raise RuntimeError("source_blocked") from error
+            if is_source_changed(error):
+                raise RuntimeError("source_changed") from error
             raise
         if cancel.is_set():
             raise DesktopDownloadCancelled("cancelled")
         if error_code:
             raise RuntimeError("download_failed")
-        extension = "mp3" if kind == "audio" else "mp4"
+        progress(DownloadProgress.stage_only("saving"))
+        extension = selection.extension or ("mp3" if kind == "audio" else "mp4")
         candidates = sorted(
             candidate
             for candidate in library.temp.iterdir()
@@ -263,16 +360,24 @@ def download_media(
         target_root = library.audio if kind == "audio" else library.video
         destination = _collision_safe(target_root / f"{stem}.{extension}")
         os.replace(candidates[0], destination)
+        if kind == "audio" and not media.tags.is_empty():
+            # Only real music metadata is written (never a guessed artist).
+            # Tags are best effort, like artwork: a failure keeps the file.
+            with contextlib.suppress(Exception):
+                write_song_tags(destination, media.tags, media.title)
         try:
             artwork_path = _download_artwork(media, library, destination.stem)
         except Exception:  # noqa: BLE001 - artwork is explicitly best effort
             artwork_path = None
+        saved = destination.stat()
         return DownloadResult(
             relative_path=destination.relative_to(library.root).as_posix(),
             title=media.title,
             media_type=kind,
             extension=extension,
             artwork_path=artwork_path,
+            size_bytes=saved.st_size,
+            modified_at=saved.st_mtime,
         )
     finally:
         _cleanup_job_files(library, stem)

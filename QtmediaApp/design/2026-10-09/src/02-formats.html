@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Choose format</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="home-flow.css">
+<style>
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 10px; }
+  .opt {
+    position: relative; display: grid; gap: 2px; padding: 14px 14px 12px; border-radius: 12px;
+    background: var(--ink-1); border: 1px solid var(--line);
+  }
+  .opt b { font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
+  .opt span { color: var(--subtle); font-size: 12px; font-weight: 600; }
+  .opt.on { background: var(--violet-tint); border-color: var(--violet); box-shadow: 0 0 0 3px rgba(128,110,255,.15); }
+  .opt.on span { color: var(--violet-ink); }
+  .opt .tick { position: absolute; top: 10px; right: 10px; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--violet); }
+  .opt .tick .i { width: 14px; height: 14px; color: #fff; }
+  .opt.hover { background: var(--ink-3); border-color: var(--line-strong); }
+  .group { display: grid; gap: 10px; }
+  .group + .group { margin-top: 22px; }
+  .group-head { display: flex; justify-content: space-between; align-items: baseline; }
+  .audio .grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+</style></head>
+<body data-route="home">
+<main class="page flow">
+  <div class="mini-brand">QT MEDIA</div>
+
+  <div class="source panel">
+    <div class="art a2 thumb"></div>
+    <div class="src-copy">
+      <span class="eyebrow">Link inspected</span>
+      <strong>Harbour Lights - Live Session</strong>
+      <span class="muted">YouTube · 22:05</span>
+    </div>
+    <span class="btn btn-ghost">New link</span>
+  </div>
+
+  <div class="choose panel">
+    <div class="choose-body">
+      <section class="group">
+        <div class="group-head"><span class="eyebrow">Video · MP4</span><span class="subtle" style="font-size:12px">6 qualities available</span></div>
+        <div class="grid">
+          <div class="opt"><b>2160p</b><span>4K</span></div>
+          <div class="opt hover"><b>1440p</b><span>QHD</span></div>
+          <div class="opt on"><b>1080p</b><span>Full HD</span><i class="tick"><span data-i="check"></span></i></div>
+          <div class="opt"><b>720p</b><span>HD</span></div>
+          <div class="opt"><b>480p</b><span>SD</span></div>
+          <div class="opt"><b>360p</b><span>Low</span></div>
+        </div>
+      </section>
+      <section class="group audio">
+        <div class="group-head"><span class="eyebrow">Audio only</span></div>
+        <div class="grid">
+          <div class="opt"><b>MP3</b><span>192 kbps</span></div>
+        </div>
+      </section>
+    </div>
+    <footer class="choose-foot">
+      <span class="dest"><span data-i="folder" class="i-sm"></span>Saves to <b>Library / video</b></span>
+      <span class="btn btn-primary btn-lg"><span data-i="download" class="i-sm"></span>Download 1080p</span>
+    </footer>
+  </div>
+</main>
+<script src="shell.js"></script>
+</body></html>

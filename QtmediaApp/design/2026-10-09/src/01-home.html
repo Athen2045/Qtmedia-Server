@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Home</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+  .home { display: flex; flex-direction: column; align-items: center; height: 100%; padding-top: 9vh; }
+  .wordmark {
+    font: 500 76px/.9 "Bodoni Moda Local", Didot, Georgia, serif; letter-spacing: -.08em;
+    background: linear-gradient(100deg, #5a6dff 10%, #9a6cff 55%, #e65bd2 92%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .tag { margin-top: 14px; color: var(--muted); font-size: 15px; }
+  .omnibox {
+    display: flex; align-items: center; gap: 10px; width: min(720px, 100%); height: 60px; margin-top: 40px;
+    padding: 0 8px 0 18px; border-radius: 16px; background: var(--ink-2);
+    border: 1px solid var(--violet-line); box-shadow: 0 0 0 4px rgba(128,110,255,.10);
+  }
+  .omnibox .i { color: var(--violet-hi); }
+  .omnibox .ph { flex: 1; color: var(--subtle); font-size: 15px; }
+  .omnibox .caret { width: 1.5px; height: 20px; background: var(--violet-hi); margin-right: -6px; }
+  .hint { display: flex; gap: 18px; margin-top: 14px; color: var(--subtle); font-size: 12.5px; }
+  .hint b { color: var(--muted); font-weight: 600; }
+  kbd { padding: 1px 6px; border-radius: 5px; border: 1px solid var(--line-strong); color: var(--muted); font: 600 11px "Segoe UI", sans-serif; }
+
+  .recent { width: min(720px, 100%); margin-top: auto; }
+  .recent-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .recent-head a { display: inline-flex; gap: 6px; align-items: center; color: var(--violet-ink); font-size: 13px; font-weight: 600; text-decoration: none; }
+  .recent-list { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .r { display: flex; gap: 12px; align-items: center; padding: 10px; border-radius: 12px; background: var(--ink-2); border: 1px solid var(--line); min-width: 0; }
+  .r .art { width: 40px; height: 40px; }
+  .r div { min-width: 0; }
+  .r strong { display: block; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .r span { color: var(--subtle); font-size: 12px; }
+  .legal { margin-top: 18px; color: var(--subtle); font-size: 11.5px; text-align: center; }
+</style></head>
+<body data-route="home">
+<main class="page home">
+  <div class="wordmark">QT MEDIA</div>
+  <p class="tag">Save media. Keep it yours.</p>
+
+  <div class="omnibox">
+    <span data-i="link"></span>
+    <span class="caret"></span>
+    <span class="ph">Paste a video or audio link</span>
+    <span class="btn btn-quiet"><span data-i="clipboard" class="i-sm"></span>Paste</span>
+    <span class="btn btn-primary btn-lg">Find formats</span>
+  </div>
+  <div class="hint">
+    <span><b>YouTube</b> and 7 other supported sites · <span style="color:var(--violet-ink)">See list</span></span>
+    <span><kbd>Ctrl</kbd> <kbd>V</kbd> then <kbd>Enter</kbd></span>
+  </div>
+
+  <section class="recent">
+    <div class="recent-head">
+      <span class="eyebrow">Recently saved</span>
+      <a>Open Files <span data-i="arrow" class="i-sm"></span></a>
+    </div>
+    <div class="recent-list">
+      <div class="r"><div class="art a1"></div><div><strong>Night Drive (Official Video)</strong><span>Video · 1080p · 4:01</span></div></div>
+      <div class="r"><div class="art a1"></div><div><strong>Night Drive</strong><span>Audio · MP3 · 4:01</span></div></div>
+      <div class="r"><div class="art a2"></div><div><strong>Harbour Lights - Live Session</strong><span>Video · 720p · 22:05</span></div></div>
+    </div>
+    <p class="legal">Processed on this device. Download only media you have permission to access.</p>
+  </section>
+</main>
+<script src="shell.js"></script>
+</body></html>

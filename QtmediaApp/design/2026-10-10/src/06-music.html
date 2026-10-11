@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Music</title>
+<link rel="stylesheet" href="fluid.css">
+<style>
+  .grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 26px 20px; }
+  .t { display: grid; gap: 10px; min-width: 0; }
+  .cover { position: relative; aspect-ratio: 1; border-radius: 22px; overflow: hidden; }
+  .cover .pl { position: absolute; right: 10px; bottom: 10px; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--violet); color: #fff; box-shadow: 0 10px 24px rgba(0,0,0,.45); opacity: 0; transform: translateY(8px); }
+  .cover .pl .ic { margin-left: 2px; }
+  .t.hover .cover { box-shadow: 0 22px 46px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.12); }
+  .t.hover .pl { opacity: 1; transform: none; }
+  .t.playing .cover { box-shadow: 0 0 0 2px var(--violet), 0 18px 40px rgba(130,112,255,.3); }
+  .t strong { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .t.playing strong { color: var(--violet-ink); }
+  .t span.s { color: var(--subtle); font-size: 12.5px; margin-top: -6px; }
+  .eq { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; }
+  .eq i { width: 3px; border-radius: 2px; background: var(--violet-ink); }
+
+  .player {
+    position: fixed; z-index: 9; left: 124px; right: 44px; bottom: 18px;
+    display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 24px;
+    padding: 10px 22px 10px 10px; border-radius: 999px; border: 1px solid var(--rim-strong);
+    background: var(--glass-strong); backdrop-filter: blur(24px); box-shadow: 0 24px 60px rgba(0,0,0,.55);
+  }
+  .now { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .now .art { width: 52px; height: 52px; border-radius: 50%; }
+  .now strong { display: block; font-size: 14px; font-weight: 600; }
+  .now span { color: var(--subtle); font-size: 12px; }
+  .mid { display: grid; justify-items: center; gap: 6px; width: 440px; }
+  .ctl { display: flex; align-items: center; gap: 20px; color: var(--muted); }
+  .ctl .main { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; background: var(--text); color: var(--ink-0); }
+  .time { display: flex; align-items: center; gap: 10px; width: 100%; color: var(--subtle); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+  .time .meter { flex: 1; height: 4px; }
+  .vol { justify-self: end; display: flex; align-items: center; gap: 10px; color: var(--muted); }
+  .vol .meter { width: 96px; height: 4px; }
+  .vol .meter i { background: var(--muted); }
+</style></head>
+<body data-route="music">
+<main class="stage">
+  <div class="page-head">
+    <div><div class="eyebrow">Your music</div><h1 class="page-title">Music <span class="tag tag-violet" style="vertical-align:6px;margin-left:8px">Player coming soon</span></h1></div>
+    <div class="aside"><span class="subtle" style="font-size:13px">6 tracks</span><span class="btn btn-ghost">Newest first<span data-i="chevron" class="ic-sm"></span></span></div>
+  </div>
+  <div class="grid">
+    <div class="t playing"><div class="cover art a1"><span class="pl"><span data-i="play"></span></span></div><strong><span class="eq"><i style="height:6px"></i><i style="height:12px"></i><i style="height:8px"></i></span>Night Drive</strong><span class="s">4:01</span></div>
+    <div class="t hover"><div class="cover art a3"><span class="pl"><span data-i="play"></span></span></div><strong>Morning Loop</strong><span class="s">2:48</span></div>
+    <div class="t"><div class="cover art a5"><span class="pl"><span data-i="play"></span></span></div><strong>Glasshouse</strong><span class="s">5:02</span></div>
+    <div class="t"><div class="cover art a2"><span class="pl"><span data-i="play"></span></span></div><strong>Harbour Lights (Live)</strong><span class="s">22:05</span></div>
+    <div class="t"><div class="cover art a4"><span class="pl"><span data-i="play"></span></span></div><strong>Field Recording No. 2</strong><span class="s">6:40</span></div>
+    <div class="t"><div class="cover art a6"><span class="pl"><span data-i="play"></span></span></div><strong>Afterglow</strong><span class="s">3:55</span></div>
+  </div>
+</main>
+<div class="player">
+  <div class="now"><div class="art a1"></div><div><strong>Night Drive</strong><span>From your library</span></div></div>
+  <div class="mid">
+    <div class="ctl"><span data-i="prev"></span><span class="main"><span data-i="pause"></span></span><span data-i="next"></span></div>
+    <div class="time"><span>1:27</span><div class="meter"><i style="width:36%"></i></div><span>4:01</span></div>
+  </div>
+  <div class="vol"><span data-i="volume" class="ic-sm"></span><div class="meter"><i style="width:70%"></i></div></div>
+</div>
+<script src="fluid.js"></script>
+</body></html>

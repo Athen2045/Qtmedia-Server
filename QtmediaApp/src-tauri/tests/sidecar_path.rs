@@ -2,7 +2,10 @@ use std::path::Path;
 
 use qtmedia_app::{
     protocol::StableError,
-    sidecar::{bundled_binary_sibling, request_can_recover, ActivityTracker, LifecycleTracker},
+    sidecar::{
+        bundled_binary_sibling, request_can_recover, ActivityTracker, BundledTools,
+        LifecycleTracker,
+    },
 };
 
 #[test]
@@ -63,4 +66,42 @@ fn activity_tracker_releases_jobs_after_engine_loss() {
     tracker.clear();
 
     assert!(!tracker.is_busy());
+}
+
+#[test]
+fn bundled_tools_require_ffmpeg_and_the_deno_runtime() {
+    let directory = tempfile::tempdir().unwrap();
+    let executable = directory.path().join("Qtmedia.exe");
+    let (ffmpeg, deno) = if cfg!(windows) {
+        ("ffmpeg.exe", "deno.exe")
+    } else {
+        ("ffmpeg", "deno")
+    };
+    std::fs::write(directory.path().join(ffmpeg), b"binary").unwrap();
+    assert_eq!(
+        BundledTools::locate(&executable).unwrap_err(),
+        StableError::SidecarUnavailable
+    );
+
+    std::fs::write(directory.path().join(deno), b"binary").unwrap();
+    let tools = BundledTools::locate(&executable).unwrap();
+    assert_eq!(tools.ffmpeg, directory.path().join(ffmpeg));
+    assert_eq!(tools.deno, directory.path().join(deno));
+}
+
+#[test]
+fn ytdlp_updates_live_in_the_app_data_tools_folder() {
+    let dir = qtmedia_app::sidecar::ytdlp_tools_dir(std::path::Path::new("data"));
+    assert_eq!(
+        dir,
+        std::path::Path::new("data").join("tools").join("yt-dlp")
+    );
+    assert!(request_can_recover(
+        "ytdlp_status",
+        StableError::ProcessExited
+    ));
+    assert!(!request_can_recover(
+        "ytdlp_update",
+        StableError::ProcessExited
+    ));
 }

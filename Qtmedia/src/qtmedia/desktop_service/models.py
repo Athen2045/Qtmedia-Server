@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+from .song_tags import SongTags
+
 MediaKind = Literal["audio", "video"]
 
 
@@ -72,6 +74,8 @@ class InspectedMedia:
     download_url: str | None = None
     formats: tuple[FormatOption, ...] = field(default_factory=tuple)
     selections: Mapping[str, FormatSelection] = field(default_factory=dict, repr=False, compare=False)
+    # Music metadata written into saved audio (title/artist/album only).
+    tags: SongTags = field(default_factory=SongTags)
 
     def selection_for(self, format_key: str) -> FormatSelection:
         selection = self.selections.get(format_key)
@@ -92,15 +96,35 @@ class Inspection:
 
 @dataclass(frozen=True)
 class DownloadProgress:
+    """What the transfer is doing right now, without inventing an overall figure.
+
+    ``stage`` is ``downloading``, ``merging``, ``converting``, ``processing`` or
+    ``saving``. While downloading, ``percent`` and the byte counts describe the
+    current stream (``part`` of ``parts``; ``stream`` names it when a format is
+    merged from separate video and audio). Other stages have no percentage.
+    """
+
     downloaded_bytes: int
     total_bytes: int | None
     percent: float | None
+    stage: str = "downloading"
+    stream: str | None = None
+    part: int = 1
+    parts: int = 1
 
-    def as_dict(self) -> dict[str, int | float | None]:
+    @classmethod
+    def stage_only(cls, stage: str) -> DownloadProgress:
+        return cls(0, None, None, stage=stage)
+
+    def as_dict(self) -> dict[str, int | float | str | None]:
         return {
             "downloaded_bytes": self.downloaded_bytes,
             "total_bytes": self.total_bytes,
             "percent": self.percent,
+            "stage": self.stage,
+            "stream": self.stream,
+            "part": self.part,
+            "parts": self.parts,
         }
 
 
@@ -111,14 +135,21 @@ class DownloadResult:
     media_type: MediaKind
     extension: str
     artwork_path: str | None = None
+    size_bytes: int = 0
+    modified_at: float = 0.0
+    duration_seconds: int | None = None
 
-    def as_dict(self) -> dict[str, str | None]:
+    def as_dict(self) -> dict[str, str | int | float | None]:
+        # Same fields as a library listing entry, so the UI can show and play it.
         return {
             "relative_path": self.relative_path,
             "title": self.title,
             "media_type": self.media_type,
             "extension": self.extension,
             "artwork_path": self.artwork_path,
+            "size_bytes": self.size_bytes,
+            "modified_at": self.modified_at,
+            "duration_seconds": self.duration_seconds,
         }
 
 

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Video</title>
+<link rel="stylesheet" href="fluid.css">
+<style>
+  .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 26px 22px; }
+  .card { display: grid; gap: 12px; min-width: 0; }
+  .thumb { position: relative; aspect-ratio: 16 / 9; border-radius: 22px; overflow: hidden; transition: transform .2s; }
+  .dur { position: absolute; right: 12px; bottom: 12px; padding: 3px 9px; border-radius: 999px; background: rgba(6,6,10,.6); backdrop-filter: blur(8px); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .play { position: absolute; inset: 0; display: grid; place-items: center; opacity: 0; background: radial-gradient(circle, rgba(6,6,10,.15), rgba(6,6,10,.45)); }
+  .play span { display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%; background: rgba(255,255,255,.16); backdrop-filter: blur(14px); border: 1px solid rgba(255,255,255,.25); color: #fff; }
+  .play .ic { width: 28px; height: 28px; margin-left: 3px; }
+  .card.hover .thumb { transform: translateY(-3px); box-shadow: 0 24px 50px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.12); }
+  .card.hover .play { opacity: 1; }
+  .meta strong { display: block; font-size: 14.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .meta span { color: var(--subtle); font-size: 12.5px; }
+</style></head>
+<body data-route="video">
+<main class="stage">
+  <div class="page-head">
+    <div><div class="eyebrow">Your videos</div><h1 class="page-title">Video <span class="tag tag-violet" style="vertical-align:6px;margin-left:8px">Player coming soon</span></h1></div>
+    <div class="aside"><span class="subtle" style="font-size:13px">6 videos</span><span class="btn btn-ghost">Newest first<span data-i="chevron" class="ic-sm"></span></span></div>
+  </div>
+  <div class="grid">
+    <div class="card"><div class="thumb art a2"><span class="dur">22:05</span><div class="play"><span><span data-i="play"></span></span></div></div><div class="meta"><strong>Harbour Lights - Live Session</strong><span>Today · 62.5 MB</span></div></div>
+    <div class="card hover"><div class="thumb art a1"><span class="dur">4:01</span><div class="play"><span><span data-i="play"></span></span></div></div><div class="meta"><strong>Night Drive (Official Video)</strong><span>Today · 84.2 MB</span></div></div>
+    <div class="card"><div class="thumb art a4"><span class="dur">12:14</span><div class="play"><span><span data-i="play"></span></span></div></div><div class="meta"><strong>Field Notes, Episode 4</strong><span>Sep 30 · 148.4 MB</span></div></div>
+    <div class="card"><div class="thumb art a5"><span class="dur">8:37</span><div class="play"><span><span data-i="play"></span></span></div></div><div class="meta"><strong>Glasshouse (Behind the Scenes)</strong><span>Sep 22 · 96.1 MB</span></div></div>
+    <div class="card"><div class="thumb art a3"><span class="dur">3:12</span><div class="play"><span><span data-i="play"></span></span></div></div><div class="meta"><strong>Morning Loop - Visualizer</strong><span>Sep 14 · 41.8 MB</span></div></div>
+    <div class="card"><div class="thumb art a6"><span class="dur">1:46</span><div class="play"><span><span data-i="play"></span></span></div></div><div class="meta"><strong>Untitled clip</strong><span>Sep 8 · 819 KB</span></div></div>
+  </div>
+</main>
+<script src="fluid.js"></script>
+</body></html>

@@ -65,3 +65,21 @@ fn stable_errors_never_include_raw_sidecar_details() {
     let value = serde_json::to_value(StableError::ProcessExited).unwrap();
     assert_eq!(value, json!("sidecar_exited"));
 }
+
+#[test]
+fn ytdlp_status_and_update_events_are_known_and_terminal() {
+    let event = parse_sidecar_line(
+        r#"{"id":"request-9","event":"ytdlp_updated","status":"updated","version":"2026.09.27.232945","source":"updated","channel":"nightly"}"#,
+    )
+    .unwrap();
+    assert_eq!(event.frontend_payload["version"], "2026.09.27.232945");
+    assert_eq!(event.frontend_payload["channel"], "nightly");
+
+    let mut tracker = RequestTracker::default();
+    tracker.insert("status", "ytdlp_status").unwrap();
+    tracker.insert("update", "ytdlp_update").unwrap();
+    assert!(tracker.is_terminal("status", "ytdlp_status"));
+    assert!(tracker.is_terminal("update", "ytdlp_updated"));
+    assert!(tracker.is_terminal("update", "error"));
+    assert!(!tracker.is_terminal("update", "ytdlp_status"));
+}

@@ -188,3 +188,29 @@ def test_direct_url_validation_spankbang():
 def test_direct_url_validation_unknown_host_is_permissive():
     assert is_direct_video_url("https://example.test/some/video/path")
 
+
+
+def test_download_video_rewrites_spankbang_mirrors_before_validation(monkeypatch):
+    seen = []
+    monkeypatch.setattr(
+        downloader_module, "is_direct_video_url", lambda url: seen.append(url) or False
+    )
+
+    assert download_video("https://spankbang.party/6ghm6/video/title") is False
+    assert seen == ["https://spankbang.com/6ghm6/video/title"]
+
+
+def test_spankbang_mirror_helpers():
+    from qtmedia.sources.spankbang import canonical_spankbang_url, is_spankbang_url
+
+    assert is_spankbang_url("https://spankbang.party/6ghm6/video/title")
+    assert not is_spankbang_url("https://notspankbang.party/6ghm6/video/title")
+    assert canonical_spankbang_url("https://www.spankbang.party/a/video/b?x=1") == (
+        "https://www.spankbang.com/a/video/b?x=1"
+    )
+    assert canonical_spankbang_url("https://example.com/a") == "https://example.com/a"
+
+
+def test_direct_url_validation_noodlemagazine():
+    assert is_direct_video_url("https://noodlemagazine.com/watch/-226552677_456244963")
+    assert not is_direct_video_url("https://noodlemagazine.com/video/pmv")

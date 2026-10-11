@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Files</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+  .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; }
+  .toolbar .field { flex: 1; max-width: 420px; }
+  .toolbar .sort { margin-left: auto; }
+  .table { border-radius: 14px; border: 1px solid var(--line); background: var(--ink-2); overflow: hidden; }
+  .row { display: grid; grid-template-columns: 44px minmax(0, 1fr) 72px 88px 112px 84px; gap: 14px; align-items: center; padding: 9px 14px; border-bottom: 1px solid var(--line); }
+  .row:last-child { border-bottom: 0; }
+  .row.head { padding: 10px 14px; background: var(--ink-1); color: var(--subtle); font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+  .row .art { width: 44px; height: 44px; }
+  .row .name strong { display: block; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .name span { color: var(--subtle); font-size: 12.5px; }
+  .row .num { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .row .act { justify-self: end; opacity: 0; }
+  .row.hover { background: var(--ink-3); }
+  .row.hover .act { opacity: 1; }
+  .row .act .btn { height: 32px; padding: 0 12px; font-size: 13px; }
+  .ph-art { display: grid; place-items: center; color: var(--subtle); }
+  .ph-art .i { width: 20px; height: 20px; }
+</style></head>
+<body data-route="files">
+<main class="page">
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Local library</div>
+      <h1>Files</h1>
+    </div>
+    <div style="display:flex; align-items:center; gap:14px">
+      <span class="subtle" style="font-size:13px">9 items · 581 MB</span>
+      <span class="btn btn-ghost"><span data-i="open" class="i-sm"></span>Open folder</span>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <div class="segmented"><span class="on">All</span><span>Video</span><span>Audio</span></div>
+    <div class="field"><span data-i="search" class="i-sm"></span>Search your library</div>
+    <span class="btn btn-ghost sort">Recent <span data-i="chevron" class="i-sm"></span></span>
+  </div>
+
+  <div class="table">
+    <div class="row head"><span></span><span>Name</span><span>Type</span><span>Size</span><span>Added</span><span></span></div>
+    <div class="row"><div class="art a2"></div><div class="name"><strong>Harbour Lights - Live Session</strong><span>Video · 22:05</span></div><span class="chip">MP4</span><span class="num">60.0 MB</span><span class="num">Today</span><span class="act"><span class="btn btn-ghost">Open</span></span></div>
+    <div class="row hover"><div class="art a1"></div><div class="name"><strong>Night Drive (Official Video)</strong><span>Video · 4:01</span></div><span class="chip">MP4</span><span class="num">84.2 MB</span><span class="num">Today</span><span class="act"><span class="btn btn-primary">Open</span></span></div>
+    <div class="row"><div class="art a1"></div><div class="name"><strong>Night Drive</strong><span>Audio · 4:01</span></div><span class="chip">MP3</span><span class="num">5.6 MB</span><span class="num">Today</span><span class="act"><span class="btn btn-ghost">Open</span></span></div>
+    <div class="row"><div class="art a3"></div><div class="name"><strong>Morning Loop</strong><span>Audio · 2:48</span></div><span class="chip">MP3</span><span class="num">3.9 MB</span><span class="num">Oct 4</span><span class="act"><span class="btn btn-ghost">Open</span></span></div>
+    <div class="row"><div class="art a4"></div><div class="name"><strong>Field Notes, Episode 4</strong><span>Video · 12:14</span></div><span class="chip">MP4</span><span class="num">148.4 MB</span><span class="num">Sep 30</span><span class="act"><span class="btn btn-ghost">Open</span></span></div>
+    <div class="row"><div class="art a5"></div><div class="name"><strong>Glasshouse</strong><span>Audio · 5:02</span></div><span class="chip">MP3</span><span class="num">7.1 MB</span><span class="num">Sep 25</span><span class="act"><span class="btn btn-ghost">Open</span></span></div>
+    <div class="row"><div class="art a0 ph-art"><span data-i="video"></span></div><div class="name"><strong>Untitled clip</strong><span>Video</span></div><span class="chip">MP4</span><span class="num">819 KB</span><span class="num">Sep 8</span><span class="act"><span class="btn btn-ghost">Open</span></span></div>
+  </div>
+</main>
+<div class="tray">
+  <div class="art a2"></div>
+  <strong>Harbour Lights - Live Session</strong>
+  <span class="x"><span data-i="close" class="i-sm"></span></span>
+  <div class="meta"><div class="progress"><i style="width:42%"></i></div><span>42%</span></div>
+</div>
+<script src="shell.js"></script>
+</body></html>

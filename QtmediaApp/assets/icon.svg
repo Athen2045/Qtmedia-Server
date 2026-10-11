@@ -1,12 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Qtmedia QT monogram">
-  <defs>
-    <linearGradient id="brand" x1="80" y1="80" x2="432" y2="432" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#4f6bff"/>
-      <stop offset="1" stop-color="#f15ac8"/>
-    </linearGradient>
-  </defs>
-  <rect width="512" height="512" rx="112" fill="#090a0b"/>
-  <circle cx="220" cy="250" r="118" fill="none" stroke="url(#brand)" stroke-width="42"/>
-  <path d="M288 326 356 394" fill="none" stroke="url(#brand)" stroke-width="42" stroke-linecap="round"/>
-  <path d="M294 140h138M363 140v222" fill="none" stroke="url(#brand)" stroke-width="38" stroke-linecap="round"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 100 100">
+<defs>
+<linearGradient id="g" x1="18" y1="20" x2="80" y2="82" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#6f7bff"/><stop offset=".5" stop-color="#9b6cff"/><stop offset="1" stop-color="#e65bd2"/></linearGradient>
+<linearGradient id="b" x1="0" y1="0" x2="0" y2="100" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#1b1926"/><stop offset="1" stop-color="#0a0a10"/></linearGradient>
+<radialGradient id="r" cx="50" cy="38" r="60" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#7a5cff" stop-opacity=".28"/><stop offset="1" stop-color="#7a5cff" stop-opacity="0"/></radialGradient>
+</defs>
+<rect x="4" y="4" width="92" height="92" rx="27" fill="url(#b)"/>
+<rect x="4" y="4" width="92" height="92" rx="27" fill="url(#r)"/>
+<rect x="4.5" y="4.5" width="91" height="91" rx="26.5" fill="none" stroke="rgba(255,255,255,.09)"/>
+<g transform="translate(-3 -3)">
+<path d="M54.18 66.73 A21 21 0 1 1 66.73 54.18" fill="none" stroke="url(#g)" stroke-width="10.5" stroke-linecap="round"/>
+<path d="M63.26 74.58 L74.58 63.26 L78.75 78.75 Z" fill="url(#g)" stroke="url(#g)" stroke-width="7" stroke-linejoin="round"/>
+</g></svg>

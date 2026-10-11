@@ -5,6 +5,13 @@ import { App } from "./App";
 import { WindowControls } from "./components/WindowControls";
 import type { DesktopBridge } from "./lib/bridge";
 
+// The real overlay loads Video.js, which jsdom cannot run; App only needs to open and close it.
+vi.mock("./components/VideoOverlay", () => ({
+  default: ({ entry, onClose }: { entry: { relativePath: string }; onClose: () => void }) => (
+    <div role="dialog" aria-label="Video player">{entry.relativePath}<button type="button" onClick={onClose}>Close video</button></div>
+  ),
+}));
+
 
 function fakeBridge(): DesktopBridge {
   return {
@@ -37,7 +44,7 @@ describe("application shell", () => {
       "aria-current",
       "page",
     );
-    expect(screen.getByRole("heading", { name: "QT MEDIA" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Qtmedia" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Media link" })).toBeInTheDocument();
   });
 
@@ -46,7 +53,7 @@ describe("application shell", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Files" }));
 
-    expect(await screen.findByRole("heading", { name: "Your library" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Files" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "No downloads found" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Go to Home" }));
     expect(screen.getByRole("textbox", { name: "Media link" })).toBeInTheDocument();
@@ -57,21 +64,29 @@ describe("application shell", () => {
     const bridge = fakeBridge();
     bridge.subscribe = vi.fn(async (next) => { listener = next; return () => undefined; });
     render(<App bridge={bridge} />);
+    await act(async () => undefined);
+    const before = vi.mocked(bridge.listLibrary).mock.calls.length;
     fireEvent.click(screen.getByRole("button", { name: "Files" }));
     await act(async () => undefined);
     await act(async () => listener?.({ event: "library_changed", entries: [] } as import("./lib/bridge").DesktopEvent));
-    expect(bridge.listLibrary).toHaveBeenCalledTimes(1);
+    expect(bridge.listLibrary).toHaveBeenCalledTimes(before + 1);
     await act(async () => listener?.({ event: "library_changed" }));
-    expect(bridge.listLibrary).toHaveBeenCalledTimes(2);
+    expect(bridge.listLibrary).toHaveBeenCalledTimes(before + 2);
   });
 
-  it("renders honest coming-soon states", () => {
+  it("opens the Video library with its built-in player and the Music library", async () => {
     render(<App bridge={fakeBridge()} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Video" }));
+    expect(await screen.findByRole("heading", { name: "Video" })).toBeInTheDocument();
+    expect(screen.queryByText("Player coming soon")).not.toBeInTheDocument();
+    expect(screen.queryByText("Soon")).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "No videos yet" })).toBeInTheDocument();
 
-    expect(screen.getByRole("heading", { name: "Video player" })).toBeInTheDocument();
-    expect(screen.getByText("Coming next")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Music" }));
+    expect(await screen.findByRole("heading", { name: "Music" })).toBeInTheDocument();
+    expect(screen.queryByText("Player coming soon")).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "No music yet" })).toBeInTheDocument();
   });
 
   it("opens an active Settings page for the download location", async () => {
@@ -80,7 +95,7 @@ describe("application shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
 
     expect(await screen.findByRole("heading", { name: "Download location" })).toBeInTheDocument();
-    expect(screen.queryByText("Coming next")).not.toBeInTheDocument();
+    expect(screen.queryByText("Coming soon")).not.toBeInTheDocument();
   });
 
   it("keeps active download progress visible after navigating to Files", async () => {
@@ -124,5 +139,46 @@ describe("application shell", () => {
 
     rerender(<WindowControls bridge={bridge} platform="macos" />);
     expect(screen.queryByLabelText("Window controls")).not.toBeInTheDocument();
+  });
+});
+
+describe("built-in video player", () => {
+  it("opens a video from the Video page in the overlay and closes it again", async () => {
+    const bridge = fakeBridge();
+    bridge.listLibrary = vi.fn().mockResolvedValue([{ relativePath: "video/Clip.mp4", mediaType: "video", extension: "mp4", sizeBytes: 10, modifiedAt: 1, durationSeconds: null, artworkPath: null }]);
+    render(<App bridge={bridge} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Video" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Play Clip" }));
+
+    expect(await screen.findByRole("dialog", { name: "Video player" })).toHaveTextContent("video/Clip.mp4");
+    expect(bridge.openMedia).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Close video" }));
+    expect(screen.queryByRole("dialog", { name: "Video player" })).not.toBeInTheDocument();
+  });
+
+  it("pauses native music and frees the audio device when a video opens", async () => {
+    const bridge = fakeBridge();
+    const audio = {
+      play: vi.fn(async () => undefined), pause: vi.fn(async () => undefined), resume: vi.fn(async () => undefined),
+      seek: vi.fn(async () => undefined), stop: vi.fn(async () => undefined), release: vi.fn(async () => undefined),
+      setVolume: vi.fn(async () => undefined), setNext: vi.fn(async () => undefined), devices: vi.fn(async () => []),
+      getSettings: vi.fn(async () => ({ deviceId: null, mode: "shared" as const, rateMismatch: "strict" as const, exclusiveVolume: false })),
+      setSettings: vi.fn(async (value) => value), subscribe: vi.fn(async () => () => undefined),
+    };
+    bridge.audio = audio;
+    bridge.listLibrary = vi.fn().mockResolvedValue([
+      { relativePath: "audio/Song.flac", mediaType: "audio", extension: "flac", sizeBytes: 10, modifiedAt: 2, durationSeconds: 100, artworkPath: null },
+      { relativePath: "video/Clip.mp4", mediaType: "video", extension: "mp4", sizeBytes: 10, modifiedAt: 1, durationSeconds: null, artworkPath: null },
+    ]);
+    render(<App bridge={bridge} />);
+    fireEvent.click(screen.getByRole("button", { name: "Music" }));
+    fireEvent.click((await screen.findAllByRole("button", { name: "Play Song" }))[0]);
+    expect(audio.play).toHaveBeenCalledWith("audio/Song.flac", 0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Video" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Play Clip" }));
+    expect(await screen.findByRole("dialog", { name: "Video player" })).toBeInTheDocument();
+    expect(audio.release).toHaveBeenCalledOnce();
   });
 });

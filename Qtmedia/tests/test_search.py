@@ -433,3 +433,30 @@ def test_search_page_cache_round_trip(tmp_path, monkeypatch):
     search_module.cache_candidates("XVideos:example", candidates)
     assert search_module.load_cached_candidates("XVideos:example") == candidates
 
+
+
+def test_noodlemagazine_reads_card_titles_and_skips_recently_watched_links():
+    adapter = next(adapter for adapter in ADAPTERS if adapter.name == "NoodleMagazine")
+    html = """
+    <div id="list_videos" class="list_videos">
+      <div class="item"><a href="/watch/-149693196_456239174" class="item_link">
+        <div class="i_img"><i class="hd_mark">HD</i>
+          <div class="m_views">1.21M</div><div class="m_time">54:53</div></div>
+        <div class="i_info"><div class="title" data-video-title-text>Bridgette b pmv</div></div>
+      </a></div>
+    </div>
+    <div class="recent"><a href="/watch/-1_2" class="item_link">
+      <div class="title" data-video-title-text>Unrelated recent video</div></a></div>
+    <a href="/video/bridgette+b">Related search</a>
+    """
+
+    candidates = search_module._parse_candidates(
+        adapter, "https://noodlemagazine.com/video/bridgette+b+pmv", html, "bridgette b pmv"
+    )
+
+    assert [(candidate.title, candidate.url) for candidate in candidates] == [
+        ("Bridgette b pmv", "https://noodlemagazine.com/watch/-149693196_456239174")
+    ]
+    assert adapter.make_search_urls("bridgette b pmv") == (
+        "https://noodlemagazine.com/video/bridgette+b+pmv",
+    )

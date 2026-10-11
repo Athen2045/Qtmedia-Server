@@ -1,37 +1,65 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { useDesktopSession } from "../lib/DesktopSession";
-import type { FormatOption } from "../lib/bridge";
+import type { DesktopBridge, FormatOption, LibraryEntry } from "../lib/bridge";
+import { fileName, formatBytes, formatDuration } from "../lib/library";
+import { readSearchMode, writeSearchMode, type SearchMode } from "../lib/modes";
+import { describeProgress } from "../lib/progress";
+import { useOptionalPlayer } from "../lib/player";
 import { Icon } from "./Icon";
+import { QMark } from "./QMark";
 
 const errorMessages: Record<string, string> = {
   invalid_url: "Enter a valid direct media link.",
   unsupported_source: "This source is not supported by the approved adapters.",
   no_formats: "No compatible audio or video format was found.",
-  format_unavailable: "That format is no longer available. Inspect the link again.",
+  format_unavailable: "That format is no longer available. Look up the link again.",
   download_failed: "The download could not be completed.",
   sidecar_unavailable: "The local media engine is unavailable.",
   provider_unavailable: "The source could not be reached right now.",
+  source_blocked: "The site blocked this connection with an anti-bot check. This is common on VPNs. Turn on Settings → Network → Browser cookies (Firefox) and open the video once in Firefox, or try another VPN server.",
+  cookies_unavailable: "Qtmedia could not read Firefox’s cookies. Open Firefox once, or turn off Settings → Network → Browser cookies.",
+  source_changed: "This site changed and yt-dlp needs an update. Go to Settings → Media engine → Check for update.",
   clipboard_unavailable: "Qtmedia could not read the clipboard.",
+  no_video_format: "This link has no video to save. Try Music mode.",
+  no_music_format: "This link has no audio to save as music. Try Video mode.",
 };
 
-function formatDuration(seconds: number | null) {
-  if (seconds === null) return "Duration unavailable";
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
+const qualityNames: Array<[number, string]> = [[2160, "4K"], [1440, "QHD"], [1080, "Full HD"], [720, "HD"], [480, "SD"], [0, "Low"]];
+
+function describe(format: FormatOption) {
+  if (format.kind === "audio") {
+    // The engine's label carries the honest detail, e.g. "FLAC · from Opus 160 kbps".
+    const detail = format.label.split(" · ")[1] ?? (format.bitrateKbps ? `${format.bitrateKbps} kbps` : "");
+    return { name: format.extension.toUpperCase(), detail };
+  }
+  if (!format.height) return { name: "Video", detail: format.extension.toUpperCase() };
+  return { name: `${format.height}p`, detail: qualityNames.find(([minimum]) => format.height! >= minimum)?.[1] ?? "Low" };
 }
 
-export function HomePage({ onOpenFiles }: { onOpenFiles: () => void }) {
+export function HomePage({ onOpenFiles, bridge, onPlayVideo }: { onOpenFiles: () => void; bridge?: DesktopBridge; onPlayVideo?: (entry: LibraryEntry) => void }) {
   const [input, setInput] = useState("");
+  const [mode, setMode] = useState<SearchMode>(readSearchMode);
   const [clipboardError, setClipboardError] = useState(false);
-  const { state, inspect, selectFormat, startDownload, cancelDownload, reset } = useDesktopSession();
+  const [lastSite, setLastSite] = useState<string | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const { state, inspect, startDownload, cancelDownload, reset } = useDesktopSession();
+  const player = useOptionalPlayer();
   const active = state.status !== "empty";
+  const editable = state.status === "empty" || state.status === "error";
+  if (state.status === "ready" && state.site !== lastSite) setLastSite(state.site);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     const value = input.trim();
-    await inspect(value);
-    if (value) setInput("");
+    if (!value) return;
+    await inspect(value, mode);
+    setInput("");
+  };
+
+  const chooseMode = (next: SearchMode) => {
+    setMode(next);
+    writeSearchMode(next);
   };
 
   const paste = async () => {
@@ -43,59 +71,145 @@ export function HomePage({ onOpenFiles }: { onOpenFiles: () => void }) {
     }
   };
 
-  const selectedFormat = state.status === "ready"
-    ? state.formats.find((format) => format.key === state.selected)
-    : undefined;
+  // Arrow keys move between format rows, like a native menu.
+  const moveFocus = (event: React.KeyboardEvent) => {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    const rows = [...(listRef.current?.querySelectorAll<HTMLButtonElement>(".format-row") ?? [])];
+    const index = rows.indexOf(document.activeElement as HTMLButtonElement);
+    const next = rows[Math.max(0, Math.min(rows.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)))];
+    next?.focus();
+    event.preventDefault();
+  };
+
   const videoFormats = state.status === "ready" ? state.formats.filter((format) => format.kind === "video") : [];
   const audioFormats = state.status === "ready" ? state.formats.filter((format) => format.kind === "audio") : [];
+  const progress = state.status === "downloading" || state.status === "cancelling" ? describeProgress(state) : null;
+  const playSaved = () => {
+    if (state.status !== "completed") return;
+    if (state.entry.mediaType === "audio" && player?.available) {
+      player.playQueue([state.entry], 0);
+      player.openNowPlaying();
+    } else if (state.entry.mediaType === "video" && onPlayVideo) {
+      onPlayVideo(state.entry);
+    } else {
+      void bridge?.openMedia(state.entry.relativePath);
+    }
+  };
 
   return (
-    <section className={`home-page ${active ? "home-page--active" : ""}`} aria-label="Home">
-      <div className="home-content">
-        <header className="home-brand">
-          <h1 className="brand-mark">QT MEDIA</h1>
-          <p className="brand-kicker">Save media. Keep it yours.</p>
-          <p className="brand-subtitle">Paste a supported link to choose a format.</p>
-        </header>
-        <form className="link-form" onSubmit={submit}>
-          <label className="sr-only" htmlFor="media-link">Media link</label>
-          <input id="media-link" value={input} onChange={(event) => setInput(event.target.value)} placeholder="Paste a video or audio link" disabled={state.status === "inspecting" || state.status === "downloading" || state.status === "cancelling"} autoComplete="off" spellCheck={false} />
-          <button type="button" className="paste-button" aria-label="Paste from clipboard" onClick={() => void paste()}><Icon name="clipboard" /></button>
-          <button type="submit" className="inspect-button" disabled={state.status === "inspecting" || state.status === "downloading" || state.status === "cancelling"}><Icon name="search" /><span>{state.status === "inspecting" ? "Inspecting…" : "Find formats"}</span></button>
-        </form>
-        <div className="home-meta"><span>Supported sources are checked locally</span><span>Enter ↵</span></div>
-        <p className="privacy-note">Processed locally. Download only media you have permission to access.</p>
-        {clipboardError ? <p className="inline-error home-clipboard-error" role="alert">{errorMessages.clipboard_unavailable}</p> : null}
+    <section className={`home ${active ? "home--active" : ""}`} aria-label="Home">
+      <div className="home-intro">
+        <QMark size={56} />
+        <h1>Qtmedia</h1>
+        <p>Save videos and music from a link. Everything stays on this device.</p>
+      </div>
 
-        <div className={`home-result-panel ${active ? `home-result-panel--open home-result-panel--${state.status}` : ""}`} data-reveal="top-down" data-state={state.status} data-testid="home-result-panel">
-          <div className="home-result-panel__inner" aria-live="polite">
-            {state.status === "inspecting" ? <div className="inspection-skeleton" role="status" aria-label="Inspecting link"><span /><span /><span /></div> : null}
-            {state.status === "ready" ? (
-              <article className="inspection-card">
-                <div className="inspection-summary">
-                  <div className="inspection-preview"><Icon name="video" /></div>
-                  <div className="inspection-copy"><p className="eyebrow">Link inspected</p><h2>{state.title}</h2><p>{state.site} · {formatDuration(state.durationSeconds)}</p></div>
-                  <button type="button" className="text-button new-link-button" disabled={state.submitting} onClick={reset}>New link</button>
-                </div>
-                <div className="format-actions" aria-label="Available formats">
-                  {videoFormats.length > 0 ? <FormatGroup title="Video" formats={videoFormats} selected={state.selected} onSelect={selectFormat} /> : null}
-                  {audioFormats.length > 0 ? <FormatGroup title="Audio" formats={audioFormats} selected={state.selected} onSelect={selectFormat} /> : null}
-                  <div className="format-footer"><span>Only available formats are shown.</span><button type="button" className="primary-button" onClick={() => void startDownload()} disabled={!selectedFormat || state.submitting}>{state.submitting ? "Starting…" : `Download ${selectedFormat?.label ?? "Media"}`}</button></div>
-                </div>
-              </article>
-            ) : null}
-            {state.status === "downloading" || state.status === "cancelling" ? (
-              <article className="progress-card"><div><p className="eyebrow">{state.status === "cancelling" ? "Cancelling" : "Downloading"}</p><h2>{state.title}</h2><span>{state.formatLabel} · {state.percent === null ? "Preparing media" : `${Math.round(state.percent)}%`}</span></div><button type="button" className="secondary-button" disabled={state.status === "cancelling"} onClick={() => void cancelDownload()}>{state.status === "cancelling" ? "Cancelling…" : "Cancel"}</button><progress value={state.percent ?? undefined} max="100" aria-label="Download progress" /></article>
-            ) : null}
-            {state.status === "completed" ? <article className="completion-card"><div><p className="eyebrow">Saved locally</p><h2>{state.entry.relativePath.split("/").at(-1)}</h2></div><div className="completion-actions"><button className="secondary-button" type="button" onClick={reset}>New link</button><button className="primary-button" type="button" onClick={onOpenFiles}>Open Files</button></div></article> : null}
-            {state.status === "error" ? <div className="home-error"><p className="inline-error" role="alert">{state.code === "cancelled" ? "Download cancelled." : errorMessages[state.code] ?? "The request could not be completed."}</p><button type="button" className="secondary-button" onClick={reset}>Try another link</button></div> : null}
+      {editable ? (
+        <form className="search-bar" onSubmit={submit}>
+          <div className="search-mode" role="group" aria-label="What to save">
+            {(["video", "music"] as const).map((item) => (
+              <button key={item} type="button" className="search-mode__option" aria-label={item === "video" ? "Video mode" : "Music mode"} aria-pressed={mode === item} title={item === "video" ? "Saves the highest available resolution" : "Saves FLAC with cover art"} onClick={() => chooseMode(item)}>
+                <Icon name={item} />{item === "video" ? "Video" : "Music"}
+              </button>
+            ))}
           </div>
+          <label className="sr-only" htmlFor="media-link">Media link</label>
+          <input id="media-link" value={input} onChange={(event) => setInput(event.target.value)} placeholder={mode === "video" ? "Paste a video link" : "Paste a song or music video link"} autoComplete="off" spellCheck={false} autoFocus />
+          <button type="button" className="btn btn-plain" aria-label="Paste from clipboard" onClick={() => void paste()}><Icon name="clipboard" /><span aria-hidden="true">Paste</span></button>
+          <button type="submit" className="kbd-button" aria-label="Find formats" disabled={!input.trim()}>↵</button>
+        </form>
+      ) : (
+        <div className="search-bar search-bar--locked">
+          <Icon name="link" className="search-bar__icon" />
+          {state.status === "inspecting"
+            ? <><span className="search-bar__value">Looking up link…</span><span className="spinner" aria-hidden="true" /></>
+            : <><span className="token"><Icon name="check" />{state.status === "ready" ? `${state.site} link` : lastSite ? `${lastSite} link` : "Link checked"}</span><span className="grow" /></>}
+          {state.status === "ready" || state.status === "completed"
+            ? <button type="button" className="btn btn-icon btn-plain" aria-label="New link" disabled={state.status === "ready" && state.submitting} onClick={reset}><Icon name="close" /></button>
+            : null}
         </div>
+      )}
+      {clipboardError ? <p className="inline-error" role="alert">{errorMessages.clipboard_unavailable}</p> : null}
+
+      <div className={`home-result-panel ${active ? `home-result-panel--open home-result-panel--${state.status}` : ""}`} data-reveal="top-down" data-state={state.status} data-testid="home-result-panel">
+        {active ? (
+          <div className="panel" aria-live="polite">
+            {state.status === "inspecting" ? (
+              <div className="panel-search" role="status" aria-label="Inspecting link">
+                <div className="panel-line"><strong>Looking up link…</strong></div>
+                <progress className="meter" aria-label="Looking up link" />
+                <span className="panel-note">Checking which video and audio formats are available.</span>
+              </div>
+            ) : null}
+
+            {state.status === "ready" ? (
+              <>
+                <PanelHead title={state.title} detail={`${state.site} · ${state.durationSeconds === null ? "Duration unavailable" : formatDuration(state.durationSeconds)}`} audio={!videoFormats.length} />
+                <div className="format-list" ref={listRef} onKeyDown={moveFocus} aria-label="Available formats">
+                  {videoFormats.length ? <FormatGroup title="Video" note={videoFormats[0].extension.toUpperCase()} formats={videoFormats} disabled={state.submitting} onPick={(key) => void startDownload(key)} /> : null}
+                  {audioFormats.length ? <FormatGroup title="Audio" formats={audioFormats} disabled={state.submitting} onPick={(key) => void startDownload(key)} /> : null}
+                </div>
+                <div className="panel-foot">{state.submitting ? "Starting download…" : "Click a format to download it to your Library."}</div>
+              </>
+            ) : null}
+
+            {state.status === "downloading" || state.status === "cancelling" ? (
+              <>
+                <PanelHead title={state.title} detail={state.formatLabel} audio={state.formatLabel.startsWith("MP3")} />
+                <div className="panel-progress">
+                  <div className="panel-line"><strong>{progress?.label}</strong><span className="pct">{progress?.value}</span></div>
+                  <progress className="meter meter--lg" value={progress?.percent ?? undefined} max="100" aria-label="Download progress" />
+                  <div className="panel-line panel-line--meta">
+                    <span>{state.stage !== "downloading" ? "This can take a moment for long videos" : state.totalBytes ? `${formatBytes(state.downloadedBytes)} of ${formatBytes(state.totalBytes)}` : state.downloadedBytes ? `${formatBytes(state.downloadedBytes)} received` : "Waiting for the source"}</span>
+                    <button type="button" className="btn btn-default" disabled={state.status === "cancelling"} onClick={() => void cancelDownload()}>{state.status === "cancelling" ? "Cancelling…" : "Cancel"}</button>
+                  </div>
+                </div>
+              </>
+            ) : null}
+
+            {state.status === "completed" ? (
+              <div className="panel-done">
+                <span className="done-check" aria-hidden="true"><Icon name="check" /></span>
+                <div className="panel-done__copy"><strong>Saved to your Library</strong><span>{fileName(state.entry)} · {formatBytes(state.entry.sizeBytes)}</span></div>
+                <button type="button" className="btn btn-default" onClick={onOpenFiles}>Show in Files</button>
+                <button type="button" className="btn btn-accent" onClick={playSaved}><Icon name="play" />Play</button>
+              </div>
+            ) : null}
+
+            {state.status === "error" ? (
+              <div className="panel-error">
+                <p role="alert">{state.code === "cancelled" ? "Download cancelled." : errorMessages[state.code] ?? "The request could not be completed."}</p>
+                <button type="button" className="btn btn-default" onClick={reset}>Try another link</button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </section>
   );
 }
 
-function FormatGroup({ title, formats, selected, onSelect }: { title: string; formats: FormatOption[]; selected: string; onSelect: (key: string) => void }) {
-  return <fieldset className="format-section"><legend>{title}</legend><div className="format-list">{formats.map((format) => <label key={format.key} className={`format-option ${selected === format.key ? "selected" : ""}`}><input type="radio" name="media-format" value={format.key} checked={selected === format.key} onChange={() => onSelect(format.key)} /><span className="format-radio" aria-hidden="true" /><strong>{format.height ? `${format.height}p` : format.kind === "audio" ? "MP3" : "Video"}</strong><span>{format.kind === "audio" ? `${format.bitrateKbps ?? 192} kbps` : format.extension.toUpperCase()}</span></label>)}</div></fieldset>;
+function PanelHead({ title, detail, audio }: { title: string; detail: string; audio: boolean }) {
+  return (
+    <div className="panel-head">
+      <div className="panel-thumb" aria-hidden="true"><Icon name={audio ? "music" : "video"} /></div>
+      <div className="panel-title"><h2>{title}</h2><span>{detail}</span></div>
+    </div>
+  );
+}
+
+function FormatGroup({ title, note, formats, disabled, onPick }: { title: string; note?: string; formats: FormatOption[]; disabled: boolean; onPick: (key: string) => void }) {
+  return (
+    <div role="group" aria-label={title} className="format-group">
+      <div className="format-label" aria-hidden="true">{title}{note ? ` · ${note}` : ""}</div>
+      {formats.map((format) => {
+        const { name, detail } = describe(format);
+        return (
+          <button key={format.key} type="button" className="format-row" aria-label={`Download ${format.label}`} disabled={disabled} onClick={() => onPick(format.key)}>
+            <b>{name}</b><span>{detail}</span><span className="format-row__go"><Icon name="download" /><span>Download</span></span>
+          </button>
+        );
+      })}
+    </div>
+  );
 }

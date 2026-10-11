@@ -7,8 +7,9 @@ import re
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlparse
 
-from ..search.engine import adapter_for_host, is_video_candidate
 from ..sources.pmvhaven import is_pmvhaven_url
+from ..sources.spankbang import canonical_spankbang_url
+from .adapters import adapter_for_host
 
 
 class DesktopPolicyError(ValueError):
@@ -25,7 +26,9 @@ class ApprovedSource:
     site: str
 
 
-YOUTUBE_HOSTS = frozenset({"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"})
+YOUTUBE_HOSTS = frozenset(
+    {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}
+)
 YOUTUBE_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{6,}")
 
 
@@ -46,9 +49,10 @@ def _is_youtube_video_url(host: str, path: str, query: str) -> bool:
 
 
 class AdapterPolicy:
-    """Approve only configured Qtmedia video-page adapters."""
+    """Approve only the desktop app's reviewed video-page adapters."""
 
     def validate(self, url: str) -> ApprovedSource:
+        url = canonical_spankbang_url(url)
         try:
             parsed = urlparse(url)
             host = (parsed.hostname or "").casefold().rstrip(".")
@@ -81,6 +85,6 @@ class AdapterPolicy:
             raise DesktopPolicyError("unsupported_source")
 
         adapter = adapter_for_host(host)
-        if adapter is None or not is_video_candidate(adapter, parsed.path.rstrip("/")):
+        if adapter is None or not adapter.is_video_path(parsed.path.rstrip("/")):
             raise DesktopPolicyError("unsupported_source")
         return ApprovedSource(url=url, site=adapter.name)

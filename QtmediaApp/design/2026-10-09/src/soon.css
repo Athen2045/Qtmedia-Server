@@ -1,0 +1,20 @@
+/* Shared layout for the Video and Music coming-soon destinations. */
+.soon-page { display: flex; flex-direction: column; }
+.soon-badge {
+  display: inline-flex; align-items: center; height: 24px; padding: 0 10px; margin-left: 10px; vertical-align: 5px;
+  border-radius: 999px; background: var(--violet-tint); color: var(--violet-ink); font-size: 12px; font-weight: 600; letter-spacing: 0;
+}
+.soon-split { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 28px; padding-bottom: 8px; }
+.preview { min-height: 0; display: flex; align-items: flex-start; }
+.soon-copy { display: flex; flex-direction: column; gap: 14px; }
+.soon-copy h2 { font-size: 20px; letter-spacing: -.01em; line-height: 1.25; }
+.soon-copy p { font-size: 14px; }
+.plan { list-style: none; display: grid; gap: 10px; margin-top: 4px; }
+.plan li { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13.5px; }
+.plan .i { color: var(--violet-hi); }
+.ready {
+  margin-top: auto; display: grid; gap: 12px; padding: 16px; border-radius: 14px;
+  background: var(--ink-2); border: 1px solid var(--line); color: var(--muted); font-size: 13.5px;
+}
+.ready b { color: var(--text); font-weight: 600; }
+.ready .btn { justify-self: start; }

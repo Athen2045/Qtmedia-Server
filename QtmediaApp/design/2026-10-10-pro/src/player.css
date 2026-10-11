@@ -1,0 +1,19 @@
+/* Full-width player bar shared by Music views. */
+.player {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 520px) minmax(0, 1fr); align-items: center; gap: 24px;
+  height: 76px; padding: 0 24px 0 16px; border-top: 1px solid var(--sep); background: #161618; flex: none;
+}
+.now { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.now .art { width: 46px; height: 46px; border-radius: 6px; }
+.now strong { display: block; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.now span { color: var(--text-3); font-size: 12px; }
+.center { display: grid; gap: 6px; }
+.ctl { display: flex; align-items: center; justify-content: center; gap: 20px; color: var(--text-2); }
+.ctl .main { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: var(--text); color: #111; }
+.ctl .main .ic { width: 16px; height: 16px; }
+.ctl .on { color: var(--accent-hover); }
+.time { display: flex; align-items: center; gap: 10px; color: var(--text-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+.time .bar { flex: 1; height: 3px; }
+.right { display: flex; align-items: center; justify-content: flex-end; gap: 14px; color: var(--text-2); }
+.right .bar { width: 96px; height: 3px; }
+.right .bar i { background: var(--text-2); }

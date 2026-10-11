@@ -1,0 +1,40 @@
+.home { display: flex; flex-direction: column; }
+.hero-center { display: flex; flex-direction: column; align-items: center; text-align: center; padding-top: 7vh; }
+.hello { margin-top: 18px; font: 600 40px/1.1 var(--display); letter-spacing: -.03em; }
+.hello-sub { margin-top: 10px; font-size: 15.5px; }
+
+.capsule {
+  display: flex; align-items: center; gap: 10px; width: min(740px, 100%); height: 68px; margin-top: 34px;
+  padding: 0 10px 0 24px; border-radius: 999px; background: var(--glass-strong);
+  border: 1px solid var(--rim-strong); backdrop-filter: blur(20px);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .45);
+}
+.capsule.is-focused {
+  border-color: transparent;
+  background: linear-gradient(var(--ink-2), var(--ink-2)) padding-box, var(--grad) border-box;
+  box-shadow: 0 0 0 6px rgba(130, 112, 255, .10), 0 24px 70px rgba(90, 70, 220, .30);
+}
+.capsule-ic { color: var(--violet-ink); }
+.capsule-text { flex: 1; display: flex; align-items: center; gap: 4px; color: var(--subtle); font-size: 16px; text-align: left; }
+.caret { width: 1.5px; height: 22px; background: var(--violet-ink); }
+.capsule-hint { margin-top: 16px; color: var(--subtle); font-size: 12.5px; }
+
+.recent { margin-top: auto; }
+.recent-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.recent-head .btn { height: 30px; padding: 0 6px; }
+.recent-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.r-card { display: grid; gap: 4px; min-width: 0; }
+.r-card strong { margin-top: 6px; font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.r-card > span { color: var(--subtle); font-size: 12px; }
+.r-art { height: 104px; border-radius: 18px; }
+.r-art--sq { background-size: cover; }
+.r-kind { position: absolute; left: 10px; bottom: 10px; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: rgba(6, 6, 10, .55); backdrop-filter: blur(8px); color: #fff; }
+
+/* After a link is inspected the hero condenses into a header row. */
+.flow { display: flex; flex-direction: column; align-items: center; }
+.flow > * { width: min(860px, 100%); }
+.mini-capsule {
+  display: flex; align-items: center; gap: 12px; height: 52px; padding: 0 8px 0 20px; border-radius: 999px;
+  background: rgba(255, 255, 255, .04); color: var(--muted);
+}
+.mini-capsule .grow { flex: 1; font-size: 14px; }

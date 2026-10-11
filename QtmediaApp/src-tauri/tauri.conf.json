@@ -24,7 +24,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data: asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost"
+      "csp": "default-src 'self'; img-src 'self' data: asset: http://asset.localhost; media-src 'self' qtmedia: http://qtmedia.localhost; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost https://lrclib.net"
     }
   },
   "bundle": {
@@ -37,6 +37,6 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": ["binaries/qtmedia-engine", "binaries/ffmpeg"]
+    "externalBin": ["binaries/qtmedia-engine", "binaries/ffmpeg", "binaries/ffprobe", "binaries/deno"]
   }
 }

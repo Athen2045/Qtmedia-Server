@@ -65,10 +65,40 @@ The following decisions are already approved:
 - `Qtmedia/` remains the standalone CLI.
 - Home accepts direct `http` and `https` links only and uses an explicitly
   approved adapter registry.
-- Home, Files, and download-location Settings are active. Video and Music are
-  visible but deferred.
-- The base release does not include Video.js, a music player, playlists,
-  browser-cookie access, telemetry, cloud storage, file migration, or a
+- Home, Files, Music (in-app MP3 player, approved 2026-10-10) and
+  download-location Settings are active. Video lists saved videos and opens
+  them in the system player; the in-app video player is deferred.
+- Music plays through the native audio engine (`src-tauri/src/audio/`,
+  WASAPI shared or exclusive, gapless; `audio_*` commands in
+  `src/audio_commands.rs`, `audio-event` events, `audio` in
+  `preferences.json`). Commands take library-relative `audio/` paths only.
+  The webview `<audio>` path below remains for the browser preview and as
+  the automatic fallback when the engine reports `audio_unavailable`.
+- Videos: `video/` accepts MP4, M4V, MOV, MKV, WebM and AVI. MP4/M4V/WebM with
+  webview-supported codecs play directly. Others get a prepared MP4 copy
+  (`src-tauri/src/playback.rs` decides; `preparer.rs` runs the bundled
+  ffprobe/ffmpeg: remux, or NVENC/x264 + Opus transcode). Copies go in
+  `<app local data>/playback-cache` (20 GB, oldest first) and are served as
+  `qtmedia://localhost/playback/<16 hex>.mp4` (strict names only). Files →
+  Import copies picked music/videos into the library.
+- Audio reaches the webview only through the Rust `qtmedia://` scheme
+  (`src-tauri/src/media.rs`): `audio/*.mp3` in the active library, confined by
+  `paths::resolve_library_entry`, with byte ranges. No asset-protocol scope, no
+  absolute paths in the UI, and no media bytes over IPC.
+- Lyrics (Now Playing): a `.lrc` next to the song (Rust `read_lyrics`,
+  `src-tauri/src/lyrics.rs`, confined like media) is used first; otherwise the
+  webview searches LRCLIB by cleaned song title only (on by default, Settings
+  toggle). The CSP allows exactly one remote origin, `https://lrclib.net`, in
+  `connect-src`; results and misses are cached in local storage.
+- Playlists (Music page) hold library-relative paths only, in the webview's
+  local storage (`qtmedia.playlists.v1`, `lib/playlists.ts`); no files are
+  copied or moved, and songs that leave the library drop out when shown.
+  Up Next and playlists reorder by pointer drag (`lib/useDragReorder.ts`;
+  HTML5 drag and drop is not used because the Tauri file-drop handler
+  intercepts it on Windows) or Alt+Up/Down.
+- The app ignores the OS "reduce motion" setting by the user's choice
+  (2026-10-11); there are no `prefers-reduced-motion` rules.
+- The base release does not include browser-cookie access, telemetry, cloud storage, file migration, or a
   multi-root library. Settings may switch the one active application-owned
   library without moving existing downloads.
 - As of 2026-09-15 there is no fixed app size limit. Record artifact and runtime
@@ -145,7 +175,8 @@ Target baseline:
 | TypeScript | Exact compatible patch after scaffold |
 | Python | Exact 3.11+ patch shared by sidecar builders |
 | PyInstaller | 6.22.x baseline, locked after the first build |
-| FFmpeg | Pinned release/provider with recorded checksum; ship `ffmpeg` and `ffprobe` only |
+| FFmpeg | gyan.dev 9.0.2 essentials (GPL), SHA-256 pinned in `scripts/prepare-ffmpeg.ps1`; ships `ffmpeg` and `ffprobe` only |
+| yt-dlp | Bundled pinned copy; users update it from Settings → Media engine (official zipimport release, OpenPGP-verified against the pinned yt-dlp signing key, stored in the app data folder) |
 
 Platform requirements:
 
@@ -360,7 +391,11 @@ Default root:
 The sidecar scans only `audio/` and `video/`. It excludes temporary files and
 artwork-only files. The base Files view supports All/Audio/Video filters,
 local display-name search, Recent/Name/Size sorting, Open file, and Open
-library folder. It does not provide delete.
+library folder. Files supports multi-select (checkboxes, Select all, Ctrl/Shift-click,
+Ctrl+A) and Delete, which moves media to the Recycle Bin/Trash after a
+confirmation. The Rust `delete_media` command confirms each path with
+`resolve_library_entry` (`src-tauri/src/removal.rs`); artwork, `temp/` and
+paths outside the root are refused.
 
 Settings stores the selected root in a versioned local preference below app
 data. A folder picker selection resolves to `<selection>/Qtmedia/library/`,
@@ -504,7 +539,7 @@ links never reach the downloader.
 
 - Implement scan, filters, search, sorting, empty state, open file, and open
   folder.
-- Keep delete, file migration, multiple simultaneous roots, and playlists deferred.
+- Keep file migration, multiple simultaneous roots, and playlists deferred.
 
 Exit: Files survives an index rebuild and rejects path escapes.
 
@@ -537,6 +572,12 @@ pytest QtmediaApp/sidecar/tests -q
 pytest Qtmedia/tests -q
 git diff --check
 ```
+
+`pnpm --dir QtmediaApp/frontend dev` opened in a normal browser (outside
+Tauri) uses the development-only mock bridge in `frontend/src/lib/mockBridge.ts`
+with fictional sample data. Its header comment lists the link keywords and the
+`?library=` options that select each UI state. It is never bundled in release
+builds.
 
 Run `pnpm tauri dev` from the generated Tauri project root after the scaffold
 has been normalized. The exact script and config path should follow the
@@ -612,11 +653,11 @@ Release rules:
 Do not implement these in the base milestone:
 
 - embedded Video.js player;
-- Spotify-like music player, playlists, or background artwork workflow;
+- playlists or MP3 tag (artist/album) reading for the music player;
 - title search or Spotify matching;
 - additional provider adapters beyond the approved registry;
 - browser cookies or account authentication;
-- library deletion, automatic migration, or multiple simultaneous library roots;
+- permanent (non-Recycle-Bin) deletion, automatic migration, or multiple simultaneous library roots;
 - telemetry, cloud synchronization, remote accounts, or a localhost API;
 - SQLite/SQL persistence without measured need;
 - GSAP or other animation dependencies without a concrete interaction need;
