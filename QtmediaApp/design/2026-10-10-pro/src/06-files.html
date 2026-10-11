@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Files</title>
+<link rel="stylesheet" href="pro.css">
+<style>
+  .content { padding: 0; }
+  .dl { display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 10px 0 6px; border-radius: 7px; background: var(--field); color: var(--text-2); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .table { font-size: 13px; }
+  .tr { display: grid; grid-template-columns: minmax(0, 1fr) 110px 90px 140px; align-items: center; gap: 12px; height: 40px; padding: 0 24px; }
+  .th { height: 30px; color: var(--text-3); font-size: 11.5px; font-weight: 600; border-bottom: 1px solid var(--sep); }
+  .th .sorted { color: var(--text-2); display: inline-flex; align-items: center; gap: 2px; }
+  .tb .tr:nth-child(even) { background: rgba(255,255,255,.022); }
+  .tb .tr.sel { background: var(--accent); color: #fff; }
+  .tb .tr.sel .t2 { color: rgba(255,255,255,.85); }
+  .name { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .name .art { width: 26px; height: 26px; border-radius: 5px; }
+  .name span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .num { font-variant-numeric: tabular-nums; }
+  .status { position: absolute; left: 80px; right: 0; bottom: 0; display: flex; align-items: center; justify-content: space-between; height: 30px; padding: 0 24px; border-top: 1px solid var(--sep); color: var(--text-3); font-size: 12px; }
+</style></head>
+<body data-route="files">
+<div class="window">
+  <header class="toolbar">
+    <h1>Files</h1><span class="grow"></span>
+    <span class="dl" title="1 download in progress"><svg width="18" height="18" viewBox="0 0 18 18"><circle cx="9" cy="9" r="7" fill="none" stroke="rgba(255,255,255,.14)" stroke-width="2.2"/><circle cx="9" cy="9" r="7" fill="none" stroke="#7b6cf0" stroke-width="2.2" stroke-linecap="round" stroke-dasharray="44" stroke-dashoffset="25.5" transform="rotate(-90 9 9)"/></svg>42%</span>
+    <div class="segmented"><span class="on">All</span><span>Video</span><span>Music</span></div>
+    <div class="field" style="width:200px"><span data-i="search" class="ic-sm"></span>Search</div>
+    <span class="btn btn-default"><span data-i="open" class="ic-sm"></span>Open Folder</span>
+  </header>
+  <main class="content">
+    <div class="table">
+      <div class="tr th"><span>Name</span><span>Kind</span><span>Size</span><span class="sorted">Date Added <span data-i="down" class="ic-sm"></span></span></div>
+      <div class="tb">
+        <div class="tr"><div class="name"><div class="art a2"></div><span>Harbour Lights - Live Session.mp4</span></div><span class="t2">Video · 22:05</span><span class="t2 num">62.5 MB</span><span class="t2">Today, 2:14 PM</span></div>
+        <div class="tr sel"><div class="name"><div class="art a1"></div><span>Night Drive (Official Video).mp4</span></div><span class="t2">Video · 4:01</span><span class="t2 num">84.2 MB</span><span class="t2">Today, 11:02 AM</span></div>
+        <div class="tr"><div class="name"><div class="art a1"></div><span>Night Drive.mp3</span></div><span class="t2">Music · 4:01</span><span class="t2 num">5.6 MB</span><span class="t2">Today, 11:00 AM</span></div>
+        <div class="tr"><div class="name"><div class="art a3"></div><span>Morning Loop.mp3</span></div><span class="t2">Music · 2:48</span><span class="t2 num">3.9 MB</span><span class="t2">Oct 4, 2026</span></div>
+        <div class="tr"><div class="name"><div class="art a4"></div><span>Field Notes, Episode 4.mp4</span></div><span class="t2">Video · 12:14</span><span class="t2 num">148.4 MB</span><span class="t2">Sep 30, 2026</span></div>
+        <div class="tr"><div class="name"><div class="art a5"></div><span>Glasshouse.mp3</span></div><span class="t2">Music · 5:02</span><span class="t2 num">7.1 MB</span><span class="t2">Sep 25, 2026</span></div>
+        <div class="tr"><div class="name"><div class="art a0"><span data-i="video" class="ic-sm"></span></div><span>Untitled clip.mp4</span></div><span class="t2">Video</span><span class="t2 num">819 KB</span><span class="t2">Sep 8, 2026</span></div>
+        <div class="tr"><div class="name"><div class="art a6"></div><span>Afterglow.mp3</span></div><span class="t2">Music · 3:55</span><span class="t2 num">6.2 MB</span><span class="t2">Aug 10, 2026</span></div>
+      </div>
+    </div>
+  </main>
+  <div class="status"><span>8 items · 572.3 MB</span><span>Library · C:\Users\you\AppData\Roaming\Qtmedia\library</span></div>
+</div>
+<script src="shell.js"></script>
+</body></html>

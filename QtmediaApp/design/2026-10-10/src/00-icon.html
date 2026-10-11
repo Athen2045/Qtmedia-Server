@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>App icon</title>
+<link rel="stylesheet" href="fluid.css">
+<style>
+  body { overflow: hidden; }
+  .sheet { position: relative; z-index: 1; display: grid; grid-template-columns: 420px 1fr; gap: 56px; align-items: center; height: 100vh; padding: 0 88px; }
+  .hero { display: grid; place-items: center; width: 420px; height: 420px; border-radius: 48px; background: radial-gradient(60% 60% at 50% 45%, rgba(128,110,255,.22), transparent 70%); }
+  .hero svg { width: 300px; height: 300px; filter: drop-shadow(0 30px 60px rgba(90,60,220,.35)); }
+  h1 { font: 600 34px/1.1 var(--display); letter-spacing: -.025em; }
+  .lead { margin-top: 10px; max-width: 520px; color: var(--muted); font-size: 15px; }
+  .row { display: flex; align-items: flex-end; gap: 28px; margin-top: 34px; }
+  .size { display: grid; justify-items: center; gap: 10px; color: var(--subtle); font-size: 12px; }
+  .taskbars { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 34px; max-width: 560px; }
+  .tb { display: flex; align-items: center; gap: 14px; height: 56px; padding: 0 18px; border-radius: 14px; }
+  .tb.dark { background: #1c1c22; }
+  .tb.light { background: #eef0f5; color: #222; }
+  .tb .dot { width: 26px; height: 26px; border-radius: 7px; opacity: .35; background: currentColor; }
+  .tb .on { position: relative; }
+  .tb .on::after { content: ""; position: absolute; left: 50%; bottom: -9px; width: 14px; height: 3px; margin-left: -7px; border-radius: 3px; background: var(--violet); }
+  .lockups { display: flex; gap: 40px; align-items: center; margin-top: 38px; }
+</style></head>
+<body>
+<div class="sheet">
+  <div class="hero"><span data-logo="300"></span></div>
+  <div>
+    <div class="eyebrow">App icon · Q monogram</div>
+    <h1 style="margin-top:8px">The tail of the Q is the play button.</h1>
+    <p class="lead">A single, soft ring in the violet-to-pink brand gradient on an ink squircle. The ring opens at the bottom right, and a separate rounded play triangle forms the tail: Q, play and save in one mark. It still reads clearly at 16 px.</p>
+    <div class="row">
+      <div class="size"><span data-logo="96"></span>96</div>
+      <div class="size"><span data-logo="64"></span>64</div>
+      <div class="size"><span data-logo="48"></span>48</div>
+      <div class="size"><span data-logo="32"></span>32</div>
+      <div class="size"><span data-logo="24"></span>24</div>
+      <div class="size"><span data-logo="16"></span>16</div>
+    </div>
+    <div class="taskbars">
+      <div class="tb dark"><i class="dot"></i><i class="dot"></i><span class="on" data-logo="30"></span><i class="dot"></i></div>
+      <div class="tb light"><i class="dot"></i><i class="dot"></i><span class="on" data-logo="30"></span><i class="dot"></i></div>
+    </div>
+    <div class="lockups">
+      <span class="lockup"><span data-logo="40"></span><span class="wordmark">qtmedia</span></span>
+      <span class="lockup lockup--glyph"><span data-glyph="40"></span><span class="wordmark">qtmedia</span></span>
+    </div>
+  </div>
+</div>
+<script src="fluid.js"></script>
+</body></html>

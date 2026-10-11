@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Video</title>
+<link rel="stylesheet" href="pro.css">
+<style>
+  .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 22px 18px; }
+  .card { display: grid; gap: 8px; min-width: 0; }
+  .thumb { position: relative; aspect-ratio: 16 / 9; border-radius: 8px; overflow: hidden; box-shadow: 0 0 0 1px var(--sep); }
+  .dur { position: absolute; right: 6px; bottom: 6px; padding: 1px 5px; border-radius: 4px; background: rgba(0,0,0,.72); font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .play { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.35); opacity: 0; }
+  .play span { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: rgba(255,255,255,.92); color: #111; }
+  .play .ic { width: 20px; height: 20px; margin-left: 2px; }
+  .card.hover .play { opacity: 1; }
+  .card.hover .thumb { box-shadow: 0 0 0 2px var(--accent); }
+  .meta strong { display: block; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .meta span { color: var(--text-3); font-size: 12px; }
+</style></head>
+<body data-route="video">
+<div class="window">
+  <header class="toolbar">
+    <h1>Video</h1><span class="badge">Player coming soon</span><span class="grow"></span>
+    <span class="t3" style="font-size:12.5px">6 videos</span>
+    <span class="btn btn-plain">Date Added<span data-i="down" class="ic-sm"></span></span>
+  </header>
+  <main class="content">
+    <div class="grid">
+      <div class="card"><div class="thumb art a2"><span class="dur">22:05</span><div class="play"><span><span data-i="play"></span></span></div></div><div class="meta"><strong>Harbour Lights - Live Session</strong><span>Today · 62.5 MB</span></div></div>
+      <div class="card hover"><div class="thumb art a1"><span class="dur">4:01</span><div class="play"><span><span data-i="play"></span></span></div></div><div class="meta"><strong>Night Drive (Official Video)</strong><span>Today · 84.2 MB</span></div></div>
+      <div class="card"><div class="thumb art a4"><span class="dur">12:14</span><div class="play"><span><span data-i="play"></span></span></div></div><div class="meta"><strong>Field Notes, Episode 4</strong><span>Sep 30 · 148.4 MB</span></div></div>
+      <div class="card"><div class="thumb art a5"><span class="dur">8:37</span><div class="play"><span><span data-i="play"></span></span></div></div><div class="meta"><strong>Glasshouse (Behind the Scenes)</strong><span>Sep 22 · 96.1 MB</span></div></div>
+      <div class="card"><div class="thumb art a3"><span class="dur">3:12</span><div class="play"><span><span data-i="play"></span></span></div></div><div class="meta"><strong>Morning Loop - Visualizer</strong><span>Sep 14 · 41.8 MB</span></div></div>
+      <div class="card"><div class="thumb art a0"><span data-i="video" class="ic-lg"></span><span class="dur">1:46</span><div class="play"><span><span data-i="play"></span></span></div></div><div class="meta"><strong>Untitled clip</strong><span>Sep 8 · 819 KB</span></div></div>
+    </div>
+  </main>
+</div>
+<script src="shell.js"></script>
+</body></html>

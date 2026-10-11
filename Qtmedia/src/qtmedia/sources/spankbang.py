@@ -6,14 +6,35 @@ import os
 from urllib.parse import urlparse
 
 SPANKBANG_HOST = "spankbang.com"
+# Mirror domains serving the same video IDs and paths as spankbang.com.
+# yt-dlp's SpankBang extractor only matches spankbang.com, so mirror links are
+# rewritten to the canonical host before extraction.
+SPANKBANG_MIRROR_HOSTS = frozenset({"spankbang.party"})
 SUPPORTED_COOKIE_BROWSERS = frozenset({"firefox"})
 
 
+def _matches(host: str, domain: str) -> bool:
+    return host == domain or host.endswith(f".{domain}")
+
+
 def is_spankbang_url(url: str) -> bool:
-    """Return whether a URL belongs to SpankBang or one of its subdomains."""
+    """Return whether a URL belongs to SpankBang, a mirror, or a subdomain."""
 
     host = (urlparse(url).hostname or "").casefold().rstrip(".")
-    return host == SPANKBANG_HOST or host.endswith(f".{SPANKBANG_HOST}")
+    return any(_matches(host, domain) for domain in {SPANKBANG_HOST, *SPANKBANG_MIRROR_HOSTS})
+
+
+def canonical_spankbang_url(url: str) -> str:
+    """Rewrite a SpankBang mirror URL to spankbang.com; return others unchanged."""
+
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").casefold().rstrip(".")
+    mirror = next((domain for domain in SPANKBANG_MIRROR_HOSTS if _matches(host, domain)), None)
+    if mirror is None or parsed.username is not None or parsed.password is not None:
+        return url
+    canonical = host[: -len(mirror)] + SPANKBANG_HOST
+    netloc = canonical if parsed.port is None else f"{canonical}:{parsed.port}"
+    return parsed._replace(netloc=netloc).geturl()
 
 
 def _configured_cookie_browser() -> str | None:

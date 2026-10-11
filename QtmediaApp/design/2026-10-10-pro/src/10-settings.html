@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Settings</title>
+<link rel="stylesheet" href="pro.css">
+<style>
+  .col { max-width: 640px; margin: 8px auto 0; }
+  .sec-title { margin: 22px 0 6px 12px; color: var(--text-2); font-size: 12px; font-weight: 600; }
+  .sec-title:first-child { margin-top: 0; }
+  .group { border-radius: 10px; background: var(--bg-raised); box-shadow: 0 0 0 1px var(--sep); overflow: hidden; }
+  .row { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 8px 14px; }
+  .row + .row { box-shadow: inset 0 1px 0 var(--sep); }
+  .row .lbl { flex: 1; min-width: 0; }
+  .row .lbl strong { display: block; font-size: 13px; font-weight: 500; }
+  .row .lbl span { display: block; color: var(--text-3); font-size: 12px; }
+  .path { color: var(--text-2) !important; font: 12px "Cascadia Mono", Consolas, monospace !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .val { color: var(--text-2); }
+  .foot { margin: 6px 12px 0; color: var(--text-3); font-size: 12px; }
+  .ico { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 7px; color: #fff; flex: none; }
+  .i-violet { background: var(--accent); } .i-gray { background: #5a5a5f; } .i-green { background: #2c9f50; }
+</style></head>
+<body data-route="settings">
+<div class="window">
+  <header class="toolbar"><h1>Settings</h1></header>
+  <main class="content">
+    <div class="col">
+      <div class="sec-title">Downloads</div>
+      <div class="group">
+        <div class="row"><span class="ico i-violet"><span data-i="files" class="ic-sm"></span></span><div class="lbl"><strong>Download location</strong><span class="path">C:\Users\you\AppData\Roaming\Qtmedia\library</span></div><span class="badge">Default</span><span class="btn btn-default">Change…</span></div>
+        <div class="row"><span class="ico i-gray"><span data-i="open" class="ic-sm"></span></span><div class="lbl"><strong>Show library in File Explorer</strong></div><span class="btn btn-default">Open</span></div>
+        <div class="row"><span class="ico i-gray"><span data-i="settings" class="ic-sm"></span></span><div class="lbl"><strong>Use default location</strong></div><span class="btn btn-default" disabled>Restore</span></div>
+      </div>
+      <p class="foot">Changing the location doesn’t move files you’ve already saved.</p>
+
+      <div class="sec-title">Privacy</div>
+      <div class="group">
+        <div class="row"><span class="ico i-green"><span data-i="lock" class="ic-sm"></span></span><div class="lbl"><strong>Links are never stored</strong><span>Used once to find formats. No accounts, nothing uploaded.</span></div></div>
+      </div>
+
+      <div class="sec-title">About</div>
+      <div class="group">
+        <div class="row"><span data-logo="26"></span><div class="lbl"><strong>Qtmedia</strong></div><span class="val">Version 0.1.0</span></div>
+      </div>
+    </div>
+  </main>
+</div>
+<script src="shell.js"></script>
+</body></html>

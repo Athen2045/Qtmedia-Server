@@ -38,13 +38,19 @@ pub fn selected_library_root(selection: &Path) -> Result<PathBuf, PathError> {
     })
 }
 
+/// Library song formats (the native engine decodes these).
+pub const AUDIO_EXTENSIONS: &[&str] = &["mp3", "flac"];
+/// Library video formats. MP4/M4V/WebM may play directly; the rest play
+/// through a converted copy (see `playback.rs`).
+pub const VIDEO_EXTENSIONS: &[&str] = &["mp4", "m4v", "mov", "mkv", "webm", "avi"];
+
 pub fn resolve_library_entry(root: &Path, relative_path: &str) -> Result<PathBuf, PathError> {
     resolve_typed_entry(
         root,
         relative_path,
         &[
-            (&["audio"][..], &["mp3"][..]),
-            (&["video"][..], &["mp4"][..]),
+            (&["audio"][..], AUDIO_EXTENSIONS),
+            (&["video"][..], VIDEO_EXTENSIONS),
         ],
     )
 }

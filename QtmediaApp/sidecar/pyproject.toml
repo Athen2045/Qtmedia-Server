@@ -8,8 +8,13 @@ version = "0.1.0"
 description = "Private JSONL sidecar for the Qtmedia desktop application"
 requires-python = ">=3.11"
 dependencies = [
-  "Qtmedia",
+  "qtmedia-cli",
   "yt-dlp",
+  # Browser TLS fingerprints for Cloudflare-protected sites; also provides
+  # the libcurl DNS-over-HTTPS hook.
+  "curl-cffi==0.16.3",
+  # Embeds cover art into FLAC files (yt-dlp's EmbedThumbnail).
+  "mutagen==1.48.1",
 ]
 
 [project.scripts]

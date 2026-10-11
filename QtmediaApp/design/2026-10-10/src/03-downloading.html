@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Saving</title>
+<link rel="stylesheet" href="fluid.css">
+<link rel="stylesheet" href="home.css">
+<style>
+  .center { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; text-align: center; }
+  .orb { position: relative; display: grid; place-items: center; width: 240px; height: 240px; }
+  .orb::before { content: ""; position: absolute; inset: 16px; border-radius: 50%; background: radial-gradient(circle at 50% 40%, rgba(130,112,255,.28), rgba(130,112,255,.04) 60%, transparent 70%); filter: blur(4px); }
+  .orb svg.ringsvg { position: absolute; inset: 0; transform: rotate(-90deg); }
+  .pct { position: relative; font: 600 56px/1 var(--display); letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+  .pct small { font-size: 24px; color: var(--muted); margin-left: 2px; }
+  .state { position: relative; margin-top: 6px; color: var(--violet-ink); font-size: 13px; font-weight: 600; }
+  .title { margin-top: 26px; font: 600 22px/1.25 var(--display); letter-spacing: -.02em; }
+  .meta { margin-top: 6px; color: var(--muted); font-size: 13.5px; font-variant-numeric: tabular-nums; }
+  .actions { display: flex; gap: 10px; margin-top: 26px; }
+  .tip { margin-top: 22px; color: var(--subtle); font-size: 12.5px; }
+</style></head>
+<body data-route="home">
+<main class="stage">
+  <div class="center">
+    <div class="orb">
+      <svg class="ringsvg" viewBox="0 0 240 240" width="240" height="240">
+        <defs><linearGradient id="rg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6f7bff"/><stop offset=".5" stop-color="#9b6cff"/><stop offset="1" stop-color="#e65bd2"/></linearGradient></defs>
+        <circle cx="120" cy="120" r="108" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="10"/>
+        <circle cx="120" cy="120" r="108" fill="none" stroke="url(#rg)" stroke-width="10" stroke-linecap="round" stroke-dasharray="678.6" stroke-dashoffset="393.6"/>
+      </svg>
+      <div><div class="pct">42<small>%</small></div><div class="state">Saving</div></div>
+    </div>
+    <div class="title">Harbour Lights - Live Session</div>
+    <div class="meta">1080p MP4 · 26.3 MB of 62.5 MB</div>
+    <div class="actions"><span class="btn btn-soft">Cancel</span></div>
+    <p class="tip">Feel free to look around. Progress follows you at the bottom of every page.</p>
+  </div>
+</main>
+<script src="fluid.js"></script>
+</body></html>

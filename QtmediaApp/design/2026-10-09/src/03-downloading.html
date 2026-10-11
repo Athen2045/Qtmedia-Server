@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Downloading</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="home-flow.css">
+<style>
+  .job { padding: 22px 22px 20px; display: grid; gap: 14px; }
+  .job-top { display: flex; align-items: flex-end; justify-content: space-between; }
+  .pct { font-size: 40px; font-weight: 600; letter-spacing: -.03em; line-height: 1; font-variant-numeric: tabular-nums; }
+  .pct small { font-size: 18px; color: var(--muted); font-weight: 500; margin-left: 2px; }
+  .state { display: inline-flex; align-items: center; gap: 8px; color: var(--violet-ink); font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+  .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--violet); box-shadow: 0 0 0 4px rgba(128,110,255,.2); }
+  .job .progress { height: 8px; }
+  .job-meta { display: flex; justify-content: space-between; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .note { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 12px; background: var(--ink-1); border: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+  .note .i { color: var(--violet-hi); }
+  .steps { display: flex; gap: 22px; color: var(--subtle); font-size: 12.5px; }
+  .steps span { display: inline-flex; align-items: center; gap: 6px; }
+  .steps .done { color: var(--muted); }
+  .steps .done .i { color: var(--ok); }
+  .steps .now { color: var(--text); font-weight: 600; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--violet); }
+  .dot.off { background: var(--ink-4); }
+</style></head>
+<body data-route="home">
+<main class="page flow">
+  <div class="mini-brand">QT MEDIA</div>
+
+  <div class="source panel">
+    <div class="art a2 thumb"></div>
+    <div class="src-copy">
+      <span class="eyebrow">Saving</span>
+      <strong>Harbour Lights - Live Session</strong>
+      <span class="muted">YouTube · 22:05</span>
+    </div>
+    <span class="chip chip-violet">1080p MP4</span>
+  </div>
+
+  <div class="job panel">
+    <div class="job-top">
+      <div>
+        <div class="state"><i class="pulse"></i>Downloading</div>
+        <div class="pct">42<small>%</small></div>
+      </div>
+      <span class="btn btn-ghost">Cancel</span>
+    </div>
+    <div class="progress"><i style="width:42%"></i></div>
+    <div class="job-meta"><span>26.3 MB of 62.5 MB</span><span>Library / video</span></div>
+    <div class="steps">
+      <span class="done"><span data-i="check" class="i-sm"></span>Checked link</span>
+      <span class="now"><i class="dot"></i>Downloading</span>
+      <span><i class="dot off"></i>Merging to MP4</span>
+      <span><i class="dot off"></i>Saved to Files</span>
+    </div>
+  </div>
+
+  <div class="note"><span data-i="files" class="i-sm"></span>You can keep browsing. Progress follows you in the corner of every page.</div>
+</main>
+<script src="shell.js"></script>
+</body></html>

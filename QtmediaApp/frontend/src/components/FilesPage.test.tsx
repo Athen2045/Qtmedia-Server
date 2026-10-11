@@ -1,8 +1,9 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { FilesPage } from "./FilesPage";
 import type { DesktopBridge, LibraryEntry } from "../lib/bridge";
+import { PlayerProvider, usePlayer } from "../lib/player";
 
 
 function bridgeWith(entries: LibraryEntry[]): DesktopBridge {
@@ -51,7 +52,7 @@ describe("Files library", () => {
     render(<FilesPage bridge={bridge} />);
 
     expect(await screen.findByText("clip.mp4")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Audio" }));
+    fireEvent.click(screen.getByRole("button", { name: "Music" }));
     expect(screen.getByText("song.mp3")).toBeInTheDocument();
     expect(screen.queryByText("clip.mp4")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open song.mp3" }));
@@ -66,15 +67,15 @@ describe("Files library", () => {
     render(<FilesPage bridge={bridge} />);
     expect(await screen.findByText("zebra.mp3")).toBeInTheDocument();
 
-    fireEvent.change(screen.getByRole("combobox", { name: "Sort library" }), { target: { value: "name" } });
-    expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+    fireEvent.click(screen.getByRole("button", { name: "Sort by Name" }));
+    expect(screen.getAllByRole("option").map((item) => item.textContent)).toEqual([
       expect.stringContaining("alpha.mp4"),
       expect.stringContaining("zebra.mp3"),
     ]);
     fireEvent.change(screen.getByRole("textbox", { name: "Search downloaded files" }), { target: { value: "zeb" } });
     expect(screen.getByText("zebra.mp3")).toBeInTheDocument();
     expect(screen.queryByText("alpha.mp4")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Open library folder" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open Folder" }));
     expect(bridge.openLibrary).toHaveBeenCalledOnce();
   });
 
@@ -123,5 +124,122 @@ describe("Files library", () => {
     await screen.findByText("No downloads found");
     view.rerender(<FilesPage bridge={bridge} refreshToken={1} />);
     expect(await screen.findByText("new.mp4")).toBeInTheDocument();
+  });
+});
+
+describe("Files selection and delete", () => {
+  const library: LibraryEntry[] = [
+    { relativePath: "audio/a.mp3", mediaType: "audio", extension: "mp3", sizeBytes: 1024 * 1024, modifiedAt: 30, durationSeconds: null, artworkPath: null },
+    { relativePath: "audio/b.mp3", mediaType: "audio", extension: "mp3", sizeBytes: 1024 * 1024, modifiedAt: 20, durationSeconds: null, artworkPath: null },
+    { relativePath: "video/c.mp4", mediaType: "video", extension: "mp4", sizeBytes: 2 * 1024 * 1024, modifiedAt: 10, durationSeconds: null, artworkPath: null },
+  ];
+
+  function deletable(removed?: string[], failed = 0) {
+    const bridge = bridgeWith(library);
+    bridge.deleteMedia = vi.fn(async (paths: string[]) => ({ removed: removed ?? paths, failed }));
+    return bridge;
+  }
+
+  it("selects all visible files and moves them to the Recycle Bin after confirmation", async () => {
+    const bridge = deletable();
+    render(<FilesPage bridge={bridge} />);
+    await screen.findByText("a.mp3");
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select all" }));
+    expect(screen.getAllByRole("option").every((row) => row.getAttribute("aria-selected") === "true")).toBe(true);
+    expect(screen.getByText("3 selected")).toBeInTheDocument();
+    expect(screen.getByText(/3 of 3 items selected · 4\.0 MB/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    const sheet = screen.getByRole("alertdialog", { name: "Move 3 items to the Recycle Bin?" });
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+    expect(bridge.deleteMedia).not.toHaveBeenCalled();
+
+    fireEvent.click(within(sheet).getByRole("button", { name: "Move to Recycle Bin" }));
+    await waitFor(() => expect(bridge.deleteMedia).toHaveBeenCalledWith(["audio/a.mp3", "audio/b.mp3", "video/c.mp4"]));
+    await waitFor(() => expect(bridge.listLibrary).toHaveBeenCalledTimes(2));
+  });
+
+  it("supports Ctrl-click, Shift-click ranges, keyboard shortcuts and cancelling", async () => {
+    const bridge = deletable();
+    render(<FilesPage bridge={bridge} />);
+    await screen.findByText("a.mp3");
+    const [first, second, third] = screen.getAllByRole("option");
+
+    fireEvent.click(first);
+    fireEvent.click(third, { shiftKey: true });
+    expect([first, second, third].map((row) => row.getAttribute("aria-selected"))).toEqual(["true", "true", "true"]);
+    fireEvent.click(second, { ctrlKey: true });
+    expect(second).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("checkbox", { name: "Select all" })).toHaveProperty("indeterminate", true);
+
+    fireEvent.keyDown(first, { key: "Escape" });
+    expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
+    fireEvent.keyDown(first, { key: "a", ctrlKey: true });
+    expect(screen.getByText("3 selected")).toBeInTheDocument();
+
+    fireEvent.keyDown(first, { key: "Delete" });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(bridge.deleteMedia).not.toHaveBeenCalled();
+  });
+
+  it("names a single file and reports items that could not be removed", async () => {
+    const bridge = deletable([], 1);
+    render(<FilesPage bridge={bridge} />);
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select b.mp3" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("button", { name: "Move to Recycle Bin" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("1 item couldn’t be moved to the Recycle Bin.");
+    expect(bridge.deleteMedia).toHaveBeenCalledWith(["audio/b.mp3"]);
+  });
+
+  it("hides Delete when the bridge cannot remove files", async () => {
+    render(<FilesPage bridge={bridgeWith(library)} />);
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select a.mp3" }));
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+  });
+
+  it("stops playback when the playing song is deleted", async () => {
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+    const bridge = deletable();
+    bridge.mediaUrl = (path: string) => `qtmedia://localhost/${encodeURIComponent(path)}`;
+    let api: ReturnType<typeof usePlayer> | undefined;
+    function Probe() { api = usePlayer(); return null; }
+    render(<PlayerProvider bridge={bridge}><Probe /><FilesPage bridge={bridge} /></PlayerProvider>);
+    fireEvent.click(await screen.findByRole("button", { name: "Play a.mp3" }));
+    expect(api?.current?.relativePath).toBe("audio/a.mp3");
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select a.mp3" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("button", { name: "Move to Recycle Bin" }));
+    await waitFor(() => expect(api?.current).toBeNull());
+    vi.restoreAllMocks();
+  });
+
+  it("imports picked music and videos, reports skipped files, and refreshes", async () => {
+    const bridge = bridgeWith([]);
+    bridge.importMedia = vi.fn()
+      .mockResolvedValueOnce({ imported: ["video/Film.mkv", "audio/Song.flac"], skipped: 1 })
+      .mockResolvedValueOnce(null);
+    render(<FilesPage bridge={bridge} />);
+    await waitFor(() => expect(bridge.listLibrary).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+    expect(await screen.findByText(/Imported 2 files\. 1 file skipped/)).toBeInTheDocument();
+    await waitFor(() => expect(bridge.listLibrary).toHaveBeenCalledTimes(2));
+
+    // Cancelling the picker changes nothing.
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+    await waitFor(() => expect(bridge.importMedia).toHaveBeenCalledTimes(2));
+    expect(bridge.listLibrary).toHaveBeenCalledTimes(2);
+  });
+
+  it("hides Import where the host can't pick files", async () => {
+    render(<FilesPage bridge={bridgeWith([])} />);
+    await screen.findByRole("button", { name: /Open Folder/ });
+    expect(screen.queryByRole("button", { name: "Import" })).not.toBeInTheDocument();
   });
 });

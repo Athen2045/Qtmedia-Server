@@ -6,13 +6,18 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-ALLOWED_ACTIONS = frozenset({"probe", "inspect", "download", "cancel", "library_list"})
+ALLOWED_ACTIONS = frozenset(
+    {"probe", "inspect", "download", "cancel", "library_list", "ytdlp_status", "ytdlp_update"}
+)
+YTDLP_CHANNELS = frozenset({"stable", "nightly"})
 ACTION_FIELDS = {
     "probe": frozenset(),
     "inspect": frozenset({"url"}),
     "download": frozenset({"media_id", "format_key"}),
     "cancel": frozenset({"job_id"}),
     "library_list": frozenset(),
+    "ytdlp_status": frozenset(),
+    "ytdlp_update": frozenset({"channel"}),
 }
 EVENT_FIELDS = frozenset(
     {
@@ -29,6 +34,13 @@ EVENT_FIELDS = frozenset(
         "entry",
         "entries",
         "status",
+        "stage",
+        "stream",
+        "part",
+        "parts",
+        "version",
+        "source",
+        "channel",
     }
 )
 
@@ -70,6 +82,8 @@ def parse_request(line: str) -> Request:
     ):
         raise ProtocolError("invalid_request")
     if action == "cancel" and not isinstance(payload.get("job_id"), str):
+        raise ProtocolError("invalid_request")
+    if action == "ytdlp_update" and payload.get("channel") not in YTDLP_CHANNELS:
         raise ProtocolError("invalid_request")
     return Request(request_id=request_id, action=action, payload=payload)
 

@@ -10,8 +10,11 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import TextIO
 
+from qtmedia.desktop_service.network import install_from_env as install_doh_from_env
+
 from .engine import Engine
 from .protocol import ProtocolError, encode_event, parse_request
+from .ytdlp_update import Status, activate, tools_dir_from_env
 
 
 def run(
@@ -20,6 +23,8 @@ def run(
     library_root: Path,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
+    ytdlp: Status | None = None,
+    tools_dir: Path | None = None,
 ) -> int:
     output = stdout or sys.stdout
     errors = stderr or sys.stderr
@@ -34,7 +39,7 @@ def run(
             output.write(encoded + "\n")
             output.flush()
 
-    engine = Engine(library_root, emit=emit)
+    engine = Engine(library_root, emit=emit, ytdlp=ytdlp, tools_dir=tools_dir)
     try:
         for line in lines:
             if not line.strip():
@@ -68,7 +73,18 @@ def main() -> int:
     parser.add_argument("--library-root", required=True, type=Path)
     args = parser.parse_args()
     protocol = protect_protocol_stdout()
-    return run(sys.stdin, library_root=args.library_root, stdout=protocol)
+    # Before anything imports yt_dlp: a verified, newer update replaces the
+    # bundled copy (see ytdlp_update.py).
+    tools_dir = tools_dir_from_env()
+    ytdlp = activate(tools_dir)
+    install_doh_from_env()
+    return run(
+        sys.stdin,
+        library_root=args.library_root,
+        stdout=protocol,
+        ytdlp=ytdlp,
+        tools_dir=tools_dir,
+    )
 
 
 if __name__ == "__main__":

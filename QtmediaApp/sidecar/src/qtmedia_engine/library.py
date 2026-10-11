@@ -9,8 +9,8 @@ from typing import Literal
 
 MediaType = Literal["audio", "video"]
 MEDIA_EXTENSIONS = {
-    "audio": frozenset({".mp3"}),
-    "video": frozenset({".mp4"}),
+    "audio": frozenset({".mp3", ".flac"}),
+    "video": frozenset({".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi"}),
 }
 ARTWORK_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp")
 

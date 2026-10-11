@@ -1,0 +1,23 @@
+/* Home after a link is inspected: compact brand, source card, action panel. */
+.flow { display: flex; flex-direction: column; align-items: center; gap: 14px; padding-top: 8px; }
+.flow > * { width: min(860px, 100%); }
+.mini-brand {
+  font: 500 30px/1 "Bodoni Moda Local", Didot, Georgia, serif; letter-spacing: -.07em;
+  background: linear-gradient(100deg, #5a6dff 10%, #9a6cff 55%, #e65bd2 92%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  width: auto; margin-bottom: 6px;
+}
+.source { display: flex; align-items: center; gap: 16px; padding: 14px 14px 14px 14px; }
+.source .thumb { width: 96px; height: 54px; border-radius: 8px; }
+.src-copy { flex: 1; display: grid; gap: 1px; min-width: 0; }
+.src-copy strong { font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.src-copy .muted { font-size: 13px; }
+
+.choose { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.choose-body { padding: 20px 20px 22px; overflow: auto; }
+.choose-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 14px 16px 14px 20px; border-top: 1px solid var(--line); background: rgba(0,0,0,.18);
+}
+.dest { display: inline-flex; align-items: center; gap: 8px; color: var(--subtle); font-size: 13px; }
+.dest b { color: var(--muted); font-weight: 600; }

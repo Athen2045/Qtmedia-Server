@@ -1,12 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
+import { pickFormat, type SearchMode } from "./modes";
+import type { DownloadStage } from "./progress";
 import type { DesktopBridge, DesktopEvent, FormatOption, LibraryEntry } from "./bridge";
 
 export type SessionState =
   | { status: "empty" }
   | { status: "inspecting" }
   | { status: "ready"; mediaId: string; title: string; site: string; durationSeconds: number | null; formats: FormatOption[]; selected: string; submitting: boolean }
-  | { status: "downloading" | "cancelling"; jobId: string; title: string; formatLabel: string; downloadedBytes: number; totalBytes: number | null; percent: number | null }
+  | { status: "downloading" | "cancelling"; jobId: string; title: string; formatLabel: string; downloadedBytes: number; totalBytes: number | null; percent: number | null; stage: DownloadStage; stream: "video" | "audio" | null; part: number; parts: number }
   | { status: "completed"; entry: LibraryEntry }
   | { status: "error"; code: string };
 
@@ -14,9 +16,11 @@ type SessionContextValue = {
   state: SessionState;
   busy: boolean;
   libraryRevision: number;
-  inspect(url: string): Promise<void>;
+  /** With a mode, the matching format downloads as soon as inspection is ready. */
+  inspect(url: string, mode?: SearchMode): Promise<void>;
   selectFormat(key: string): void;
-  startDownload(): Promise<void>;
+  /** Downloads `formatKey` (or the current selection) for the inspected link. */
+  startDownload(formatKey?: string): Promise<void>;
   cancelDownload(): Promise<void>;
   reset(): void;
   refreshLibrary(): void;
@@ -28,6 +32,7 @@ const safeErrorCodes = new Set([
   "invalid_url", "unsupported_source", "no_formats", "format_unavailable",
   "download_failed", "sidecar_unavailable", "provider_unavailable",
   "request_timeout", "storage_busy", "storage_unavailable", "cancelled",
+  "no_video_format", "no_music_format", "source_changed", "source_blocked", "cookies_unavailable",
 ]);
 
 function safeCode(error: unknown, fallback: string) {
@@ -44,6 +49,7 @@ export function DesktopSessionProvider({ bridge, children }: { bridge: DesktopBr
   const [libraryRevision, setLibraryRevision] = useState(0);
   const stateRef = useRef(state);
   const submissionRef = useRef(false);
+  const modeRef = useRef<SearchMode | null>(null);
   stateRef.current = state;
 
   useEffect(() => {
@@ -54,7 +60,9 @@ export function DesktopSessionProvider({ bridge, children }: { bridge: DesktopBr
       if (event.event === "inspection_started") setState({ status: "inspecting" });
       if (event.event === "inspection_ready") {
         submissionRef.current = false;
-        setState({
+        const mode = modeRef.current;
+        modeRef.current = null;
+        const ready: SessionState = {
           status: "ready",
           mediaId: event.mediaId,
           title: event.title,
@@ -63,7 +71,24 @@ export function DesktopSessionProvider({ bridge, children }: { bridge: DesktopBr
           formats: event.formats,
           selected: event.formats[0]?.key ?? "",
           submitting: false,
-        });
+        };
+        if (!mode) {
+          setState(ready);
+        } else {
+          const key = pickFormat(event.formats, mode);
+          if (!key) {
+            setState({ status: "error", code: mode === "music" ? "no_music_format" : "no_video_format" });
+          } else {
+            const next: SessionState = { ...ready, selected: key, submitting: true };
+            submissionRef.current = true;
+            stateRef.current = next;
+            setState(next);
+            void bridge.startDownload(event.mediaId, key).catch((error: unknown) => {
+              submissionRef.current = false;
+              setState({ status: "error", code: safeCode(error, "sidecar_unavailable") });
+            });
+          }
+        }
       }
       if (event.event === "download_started") {
         const current = stateRef.current;
@@ -78,6 +103,10 @@ export function DesktopSessionProvider({ bridge, children }: { bridge: DesktopBr
           downloadedBytes: 0,
           totalBytes: null,
           percent: null,
+          stage: "downloading",
+          stream: null,
+          part: 1,
+          parts: 1,
         };
         stateRef.current = next;
         setState(next);
@@ -85,7 +114,16 @@ export function DesktopSessionProvider({ bridge, children }: { bridge: DesktopBr
       if (event.event === "download_progress") {
         const current = stateRef.current;
         if (!(current.status === "downloading" || current.status === "cancelling") || current.jobId !== event.jobId) return;
-        const next: SessionState = { ...current, downloadedBytes: event.downloadedBytes, totalBytes: event.totalBytes, percent: event.percent };
+        const next: SessionState = {
+          ...current,
+          downloadedBytes: event.downloadedBytes,
+          totalBytes: event.totalBytes,
+          percent: event.percent,
+          stage: event.stage ?? "downloading",
+          stream: event.stream ?? null,
+          part: event.part ?? 1,
+          parts: event.parts ?? 1,
+        };
         stateRef.current = next;
         setState(next);
       }
@@ -120,7 +158,8 @@ export function DesktopSessionProvider({ bridge, children }: { bridge: DesktopBr
     };
   }, [bridge]);
 
-  const inspect = useCallback(async (url: string) => {
+  const inspect = useCallback(async (url: string, mode?: SearchMode) => {
+    modeRef.current = mode ?? null;
     setState({ status: "inspecting" });
     try {
       await bridge.inspectLink(url);
@@ -133,13 +172,16 @@ export function DesktopSessionProvider({ bridge, children }: { bridge: DesktopBr
     setState((current) => current.status === "ready" && !current.submitting ? { ...current, selected: key } : current);
   }, []);
 
-  const startDownload = useCallback(async () => {
+  const startDownload = useCallback(async (formatKey?: string) => {
     const current = stateRef.current;
-    if (current.status !== "ready" || current.submitting || submissionRef.current || !current.selected) return;
+    const key = formatKey ?? (current.status === "ready" ? current.selected : "");
+    if (current.status !== "ready" || current.submitting || submissionRef.current || !current.formats.some((format) => format.key === key)) return;
     submissionRef.current = true;
-    setState({ ...current, submitting: true });
+    const next: SessionState = { ...current, selected: key, submitting: true };
+    stateRef.current = next;
+    setState(next);
     try {
-      await bridge.startDownload(current.mediaId, current.selected);
+      await bridge.startDownload(current.mediaId, key);
     } catch (error) {
       submissionRef.current = false;
       setState({ status: "error", code: safeCode(error, "sidecar_unavailable") });
@@ -160,6 +202,7 @@ export function DesktopSessionProvider({ bridge, children }: { bridge: DesktopBr
   const reset = useCallback(() => {
     if (!(["inspecting", "downloading", "cancelling"] as string[]).includes(stateRef.current.status)) {
       submissionRef.current = false;
+      modeRef.current = null;
       setState({ status: "empty" });
     }
   }, []);

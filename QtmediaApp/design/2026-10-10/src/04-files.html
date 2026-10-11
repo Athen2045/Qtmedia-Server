@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Files</title>
+<link rel="stylesheet" href="fluid.css">
+<style>
+  .bar { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+  .bar .search { flex: 1; max-width: 380px; }
+  .bar .spacer { flex: 1; }
+  .group { margin-bottom: 14px; }
+  .group h3 { margin: 0 0 6px 12px; color: var(--subtle); font-size: 12px; font-weight: 600; }
+  .row { display: grid; grid-template-columns: 44px minmax(0, 1fr) 80px 90px 96px; align-items: center; gap: 16px; padding: 8px 12px; border-radius: 18px; }
+  .row .art { width: 44px; height: 44px; border-radius: 12px; }
+  .row strong { display: block; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .sub { color: var(--subtle); font-size: 12.5px; }
+  .row .num { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; text-align: right; }
+  .row .acts { display: flex; justify-content: flex-end; gap: 6px; opacity: 0; }
+  .row.hover { background: rgba(255,255,255,.045); }
+  .row.hover .acts { opacity: 1; }
+  .round { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: rgba(255,255,255,.07); color: var(--text); }
+  .round.primary { background: var(--violet); color: #fff; box-shadow: 0 6px 18px rgba(130,112,255,.35); }
+</style></head>
+<body data-route="files">
+<main class="stage">
+  <div class="page-head">
+    <div><div class="eyebrow">Library</div><h1 class="page-title">Files</h1></div>
+    <div class="aside"><span class="subtle" style="font-size:13px">8 items · 572 MB</span><span class="btn btn-soft"><span data-i="open" class="ic-sm"></span>Open folder</span></div>
+  </div>
+
+  <div class="bar">
+    <div class="pills"><span class="on">All</span><span>Video</span><span>Music</span></div>
+    <div class="search"><span data-i="search" class="ic-sm"></span>Search your library</div>
+    <span class="spacer"></span>
+    <span class="btn btn-ghost">Newest first<span data-i="chevron" class="ic-sm"></span></span>
+  </div>
+
+  <div class="group">
+    <h3>Today</h3>
+    <div class="row"><div class="art a2"></div><div><strong>Harbour Lights - Live Session</strong><span class="sub">Video · 22:05 · MP4</span></div><span class="num">62.5 MB</span><span class="num">2:14 PM</span><span class="acts"><span class="round"><span data-i="open" class="ic-sm"></span></span><span class="round primary"><span data-i="play" class="ic-sm"></span></span></span></div>
+    <div class="row hover"><div class="art a1"></div><div><strong>Night Drive (Official Video)</strong><span class="sub">Video · 4:01 · MP4</span></div><span class="num">84.2 MB</span><span class="num">11:02 AM</span><span class="acts"><span class="round"><span data-i="open" class="ic-sm"></span></span><span class="round primary"><span data-i="play" class="ic-sm"></span></span></span></div>
+    <div class="row"><div class="art a1"></div><div><strong>Night Drive</strong><span class="sub">Music · 4:01 · MP3</span></div><span class="num">5.6 MB</span><span class="num">11:00 AM</span><span class="acts"></span></div>
+  </div>
+  <div class="group">
+    <h3>This week</h3>
+    <div class="row"><div class="art a3"></div><div><strong>Morning Loop</strong><span class="sub">Music · 2:48 · MP3</span></div><span class="num">3.9 MB</span><span class="num">Oct 4</span><span class="acts"></span></div>
+    <div class="row"><div class="art a4"></div><div><strong>Field Notes, Episode 4</strong><span class="sub">Video · 12:14 · MP4</span></div><span class="num">148.4 MB</span><span class="num">Sep 30</span><span class="acts"></span></div>
+  </div>
+  <div class="group">
+    <h3>Earlier</h3>
+    <div class="row"><div class="art a5"></div><div><strong>Glasshouse</strong><span class="sub">Music · 5:02 · MP3</span></div><span class="num">7.1 MB</span><span class="num">Sep 25</span><span class="acts"></span></div>
+  </div>
+</main>
+<div class="activity">
+  <svg class="ring" width="40" height="40" viewBox="0 0 40 40"><defs><linearGradient id="mg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6f7bff"/><stop offset="1" stop-color="#e65bd2"/></linearGradient></defs><circle cx="20" cy="20" r="16" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="4"/><circle cx="20" cy="20" r="16" fill="none" stroke="url(#mg)" stroke-width="4" stroke-linecap="round" stroke-dasharray="100.5" stroke-dashoffset="58" transform="rotate(-90 20 20)"/></svg>
+  <div class="copy"><strong>Harbour Lights - Live Session</strong><span>1080p · 42% · 26.3 of 62.5 MB</span></div>
+  <span class="x"><span data-i="x" class="ic-sm"></span></span>
+</div>
+<script src="fluid.js"></script>
+</body></html>

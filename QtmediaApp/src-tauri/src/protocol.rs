@@ -14,6 +14,8 @@ const KNOWN_EVENTS: &[&str] = &[
     "cancellation_requested",
     "download_cancelled",
     "library_changed",
+    "ytdlp_status",
+    "ytdlp_updated",
     "error",
 ];
 
@@ -43,6 +45,8 @@ pub enum StableError {
     StorageBusy,
     #[serde(rename = "storage_unavailable")]
     StorageUnavailable,
+    #[serde(rename = "invalid_proxy")]
+    InvalidProxy,
 }
 
 impl fmt::Display for StableError {
@@ -148,6 +152,8 @@ pub fn terminal_event(action: &str, event: &str) -> bool {
             | ("download", "download_started")
             | ("cancel", "cancellation_requested")
             | ("library_list", "library_changed")
+            | ("ytdlp_status", "ytdlp_status")
+            | ("ytdlp_update", "ytdlp_updated")
     )
 }
 

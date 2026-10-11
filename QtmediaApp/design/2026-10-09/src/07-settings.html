@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Settings</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+  .settings { max-width: 860px; }
+  .section { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 28px; padding: 22px 0; border-top: 1px solid var(--line); }
+  .section:first-of-type { border-top: 0; padding-top: 4px; }
+  .section h2 { margin-bottom: 4px; }
+  .section p { color: var(--subtle); font-size: 13px; }
+  .card { padding: 16px; border-radius: 14px; background: var(--ink-2); border: 1px solid var(--line); display: grid; gap: 14px; }
+  .path { display: flex; align-items: center; gap: 10px; padding: 11px 12px; border-radius: 10px; background: var(--ink-1); border: 1px solid var(--line); font: 13px "Cascadia Mono", Consolas, monospace; color: var(--text); }
+  .path .i { color: var(--violet-hi); }
+  .path .chip { font-family: "Segoe UI", system-ui, sans-serif; }
+  .path span.t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .actions { display: flex; gap: 8px; }
+  .fine { color: var(--subtle); font-size: 12.5px; }
+  .kv { display: grid; grid-template-columns: 140px 1fr; row-gap: 10px; font-size: 13.5px; }
+  .kv dt { color: var(--subtle); }
+  .kv dd { color: var(--text); display: flex; align-items: center; gap: 8px; }
+  .ok { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px rgba(95,211,154,.15); }
+</style></head>
+<body data-route="settings">
+<main class="page">
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Preferences</div>
+      <h1>Settings</h1>
+    </div>
+  </div>
+
+  <div class="settings">
+    <section class="section">
+      <div><h2>Download location</h2><p>Where new videos and music are saved.</p></div>
+      <div class="card">
+        <div class="path"><span data-i="folder" class="i-sm"></span><span class="t">C:\Users\you\AppData\Roaming\Qtmedia\library</span><span class="chip chip-violet">Default</span></div>
+        <div class="actions">
+          <span class="btn btn-ghost">Change folder…</span>
+          <span class="btn btn-ghost"><span data-i="open" class="i-sm"></span>Open</span>
+          <span class="btn btn-quiet" disabled>Use default</span>
+        </div>
+        <span class="fine">Changing the location doesn’t move files you’ve already saved.</span>
+      </div>
+    </section>
+
+    <section class="section">
+      <div><h2>Privacy</h2><p>How Qtmedia handles links and files.</p></div>
+      <div class="card">
+        <dl class="kv">
+          <dt>Links</dt><dd>Used once to find formats, never stored</dd>
+          <dt>Processing</dt><dd>On this device only</dd>
+          <dt>Accounts</dt><dd>None required</dd>
+        </dl>
+      </div>
+    </section>
+
+    <section class="section">
+      <div><h2>About</h2><p>Version and engine status.</p></div>
+      <div class="card">
+        <dl class="kv">
+          <dt>Version</dt><dd>Qtmedia 0.1.0</dd>
+          <dt>Media engine</dt><dd><i class="ok"></i>Ready</dd>
+        </dl>
+      </div>
+    </section>
+  </div>
+</main>
+<script src="shell.js"></script>
+</body></html>

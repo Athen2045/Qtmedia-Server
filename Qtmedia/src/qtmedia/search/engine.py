@@ -105,6 +105,11 @@ class SiteAdapter:
     # search regardless of query; scoping to the actual results container
     # avoids that. None scans the whole page (the common case).
     result_container_id: str | None = None
+    # CSS selector for the title element inside a result link. Some cards put
+    # badges, view counts and durations in the same link as the title, so the
+    # link's whole text would start with "HD 1.21M 54:53". None uses the link's
+    # title attribute or its full text.
+    title_selector: str | None = None
 
     def make_search_urls(self, query: str) -> tuple[str, ...]:
         if self.search_url is None:
@@ -197,6 +202,15 @@ ADAPTERS = [
             "https://www.youporn.com/search/?query={query}",
         ),
         query_style="slug",
+    ),
+    SiteAdapter(
+        "NoodleMagazine",
+        "https://noodlemagazine.com/video/{query}",
+        r"^/watch/-?\d+_\d+$",
+        # The page lists other users' recently watched videos below the
+        # results; those links match the same pattern.
+        result_container_id="list_videos",
+        title_selector="[data-video-title-text]",
     ),
 ]
 
@@ -299,7 +313,11 @@ def _parse_candidates(adapter: SiteAdapter, search_url: str, html: str, query: s
     for anchor in scope.find_all("a", href=True):
         href = urljoin(search_url, anchor["href"])
         path = urlparse(href).path
-        title = anchor.get("title") or anchor.get_text(" ", strip=True)
+        title_element = anchor.select_one(adapter.title_selector) if adapter.title_selector else None
+        if title_element is not None:
+            title = title_element.get_text(" ", strip=True)
+        else:
+            title = anchor.get("title") or anchor.get_text(" ", strip=True)
         if not (is_video_candidate(adapter, path) and title):
             continue
         candidate_key = canonical_url(href)

@@ -9,7 +9,7 @@ from ..config import DOWNLOAD_ROOT, ensure_runtime_directories
 from ..net import http_client
 from ..search.engine import adapter_for_host, impersonate_for_url, is_video_candidate
 from ..sources.pmvhaven import fetch_metadata, is_pmvhaven_url
-from ..sources.spankbang import spankbang_ydl_options
+from ..sources.spankbang import canonical_spankbang_url, spankbang_ydl_options
 from .control import DownloadCancellation, DownloadCancelled
 from .transfer import common_ydl_options, javascript_runtime_options
 
@@ -71,6 +71,7 @@ def build_ydl_options(video_url=None):
 
 
 def download_video(video_url, progress=None) -> bool:
+    video_url = canonical_spankbang_url(video_url)
     if not is_direct_video_url(video_url):
         print(f"Skipping non-video URL: {video_url}")
         return False

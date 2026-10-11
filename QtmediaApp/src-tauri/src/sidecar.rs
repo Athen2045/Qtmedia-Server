@@ -5,12 +5,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 use tokio::sync::oneshot;
 
 use crate::protocol::{parse_sidecar_line, terminal_event, StableError};
+use crate::settings::NetworkPreference;
 
 struct PendingRequest {
     action: String,
@@ -73,7 +74,7 @@ impl ActivityTracker {
 }
 
 pub fn request_can_recover(action: &str, error: StableError) -> bool {
-    matches!(action, "inspect" | "library_list")
+    matches!(action, "inspect" | "library_list" | "ytdlp_status")
         && matches!(
             error,
             StableError::SidecarUnavailable | StableError::ProcessExited
@@ -90,31 +91,78 @@ pub fn bundled_binary_sibling(
         .ok_or(StableError::SidecarUnavailable)
 }
 
+/// Helper executables shipped beside the host and handed to the engine.
+#[derive(Debug)]
+pub struct BundledTools {
+    pub ffmpeg: PathBuf,
+    /// JS runtime yt-dlp needs to solve YouTube player challenges.
+    pub deno: PathBuf,
+}
+
+impl BundledTools {
+    pub fn locate(current_executable: &Path) -> Result<Self, StableError> {
+        let suffix = if cfg!(windows) { ".exe" } else { "" };
+        let required = |name: &str| {
+            let path = bundled_binary_sibling(current_executable, &format!("{name}{suffix}"))?;
+            path.is_file()
+                .then_some(path)
+                .ok_or(StableError::SidecarUnavailable)
+        };
+        Ok(Self {
+            ffmpeg: required("ffmpeg")?,
+            deno: required("deno")?,
+        })
+    }
+}
+
+/// Where verified yt-dlp updates live (see `sidecar/.../ytdlp_update.py`).
+pub fn ytdlp_tools_dir(local_data_dir: &Path) -> PathBuf {
+    local_data_dir.join("tools").join("yt-dlp")
+}
+
+/// Environment that routes the engine's requests (see `desktop_service/network.py`).
+pub fn engine_network_env(network: &NetworkPreference) -> Vec<(&'static str, String)> {
+    let mut env = Vec::new();
+    if let Some(url) = network.doh.url() {
+        env.push(("QTMEDIA_DOH", url.to_owned()));
+    }
+    if let Some(proxy) = &network.proxy {
+        env.push(("QTMEDIA_PROXY", proxy.clone()));
+    }
+    if let Some(browser) = network.cookies.browser() {
+        env.push(("QTMEDIA_COOKIES_BROWSER", browser.to_owned()));
+    }
+    env
+}
+
 impl SidecarManager {
     pub fn start<R: Runtime>(
         app: AppHandle<R>,
         library_root: &Path,
+        network: &NetworkPreference,
     ) -> Result<Arc<Self>, StableError> {
         let root = library_root
             .to_str()
             .ok_or(StableError::SidecarUnavailable)?;
-        let ffmpeg_name = if cfg!(windows) {
-            "ffmpeg.exe"
-        } else {
-            "ffmpeg"
-        };
         let current_executable =
             std::env::current_exe().map_err(|_| StableError::SidecarUnavailable)?;
-        let ffmpeg = bundled_binary_sibling(&current_executable, ffmpeg_name)?;
-        if !ffmpeg.is_file() {
-            return Err(StableError::SidecarUnavailable);
-        }
-        let command = app
+        let tools = BundledTools::locate(&current_executable)?;
+        let ytdlp_dir = app
+            .path()
+            .app_local_data_dir()
+            .ok()
+            .map(|dir| ytdlp_tools_dir(&dir));
+        let mut command = app
             .shell()
             .sidecar("qtmedia-engine")
             .map_err(|_| StableError::SidecarUnavailable)?
             .args(["--library-root", root])
-            .env("QTMEDIA_FFMPEG", ffmpeg);
+            .env("QTMEDIA_FFMPEG", tools.ffmpeg)
+            .env("QTMEDIA_DENO", tools.deno)
+            .envs(engine_network_env(network));
+        if let Some(dir) = ytdlp_dir {
+            command = command.env("QTMEDIA_YTDLP_DIR", dir);
+        }
         let (mut events, child) = command
             .spawn()
             .map_err(|_| StableError::SidecarUnavailable)?;
@@ -239,7 +287,13 @@ impl SidecarManager {
     pub async fn request(&self, action: &str, payload: Value) -> Result<Value, StableError> {
         if !matches!(
             action,
-            "probe" | "inspect" | "download" | "cancel" | "library_list"
+            "probe"
+                | "inspect"
+                | "download"
+                | "cancel"
+                | "library_list"
+                | "ytdlp_status"
+                | "ytdlp_update"
         ) {
             return Err(StableError::InvalidRequest);
         }

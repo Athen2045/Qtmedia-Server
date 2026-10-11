@@ -73,3 +73,15 @@ def test_events_survive_windows_pipe_encoding_without_losing_unicode():
     restored = json.loads(wire.decode("utf-8"))
     assert restored["title"] == "Music 日本語 🎵"
     assert restored["formats"][0]["label"] == "MP3 · 192 kbps"
+
+
+def test_progress_stage_fields_survive_event_encoding():
+    encoded = json.loads(
+        encode_event(
+            "d1",
+            "download_progress",
+            {"job_id": "job-1", "percent": None, "stage": "merging", "stream": "audio", "part": 2, "parts": 2},
+        )
+    )
+
+    assert (encoded["stage"], encoded["stream"], encoded["part"], encoded["parts"]) == ("merging", "audio", 2, 2)
