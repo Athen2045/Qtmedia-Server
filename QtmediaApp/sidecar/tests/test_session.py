@@ -3,8 +3,8 @@ from __future__ import annotations
 import threading
 
 import pytest
-
 from qtmedia.desktop_service.models import InspectedMedia
+
 from qtmedia_engine.session import SessionCatalog, SessionError
 
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import type { DesktopBridge, LibraryEntry, SignalPath } from "../lib/bridge";
 import { readable, rgb, useCoverColor } from "../lib/coverColor";
@@ -247,39 +247,49 @@ function Backdrop({ cover }: { cover: Cover | null }) {
 /** Up Next: the playing song, then everything after it, which can be dragged into a new order. */
 function UpNext({ bridge, player }: { bridge: DesktopBridge; player: PlayerValue }) {
   const listRef = useRef<HTMLOListElement>(null);
-  const { itemProps, listClassName } = useDragReorder({
+  // The whole queue: played songs (dimmed) above the playing one, so any song
+  // can be dragged anywhere, including above the song that is playing.
+  const { itemProps, listClassName, dragging } = useDragReorder({
     count: player.queue.length,
-    first: player.index + 1,
     onMove: player.moveInQueue,
     list: listRef,
     scroller: listRef,
   });
+  const currentKey = player.current?.relativePath;
+  // Bring the playing song near the top when Up Next opens and when the song
+  // changes, leaving a little of the played songs above it.
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    const row = list?.querySelector<HTMLElement>("[aria-current=true]")?.closest("li");
+    if (!list || !row || dragging) return;
+    list.scrollTop = Math.max(0, row.offsetTop - list.offsetTop - row.offsetHeight * 0.6);
+  }, [currentKey]); // only when the song changes, not on every reorder
   const seen = new Map<string, number>();
-  const later = player.queue.length - player.index - 1;
   return (
     <section className="np-queue" aria-label="Up next">
-      <h3>Up Next{later > 1 ? <span className="np-queue__hint">Drag to reorder</span> : null}</h3>
+      <h3>Up Next{player.queue.length > 1 ? <span className="np-queue__hint">Drag to reorder</span> : null}</h3>
       <ol ref={listRef} className={listClassName}>
-        {player.queue.slice(player.index).map((entry, offset) => {
-          const index = player.index + offset;
+        {player.queue.map((entry, index) => {
           const name = mediaTitle(entry);
+          const current = index === player.index;
+          const past = index < player.index;
           // Stable keys let rows keep their identity when the order changes.
           const repeat = seen.get(entry.relativePath) ?? 0;
           seen.set(entry.relativePath, repeat + 1);
           const { className, ...drag } = itemProps(index);
           return (
-            <li key={`${entry.relativePath}#${repeat}`} className={`${className} ${offset === 0 ? "" : "is-movable"}`} {...drag}>
+            <li key={`${entry.relativePath}#${repeat}`} className={`${className} is-movable`} {...drag}>
               <button
                 type="button"
-                className={`np-item ${offset === 0 ? "is-current" : ""}`}
-                aria-current={offset === 0 ? "true" : undefined}
-                aria-description={offset === 0 ? undefined : "Drag, or press Alt and an arrow key, to move"}
+                className={`np-item ${current ? "is-current" : ""} ${past ? "is-past" : ""}`}
+                aria-current={current ? "true" : undefined}
+                aria-description="Drag, or press Alt and an arrow key, to move"
                 onClick={() => player.playAt(index)}
               >
                 <Artwork bridge={bridge} entry={entry} name={name} className="np-item__art" />
-                <span className="np-item__copy"><strong>{name}</strong><span>{offset === 0 ? (player.playing ? "Playing" : "Paused") : "From your library"}</span></span>
+                <span className="np-item__copy"><strong>{name}</strong><span>{current ? (player.playing ? "Playing" : "Paused") : past ? "Played" : "From your library"}</span></span>
                 <span className="np-item__time">{entry.durationSeconds !== null ? formatDuration(entry.durationSeconds) : ""}</span>
-                {offset === 0 ? null : <span className="np-item__grip" aria-hidden="true"><Icon name="grip" /></span>}
+                <span className="np-item__grip" aria-hidden="true"><Icon name="grip" /></span>
               </button>
             </li>
           );

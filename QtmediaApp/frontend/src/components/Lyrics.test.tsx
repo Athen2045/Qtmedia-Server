@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { parseLrc, type LyricsState } from "../lib/lyrics";
@@ -33,6 +33,24 @@ describe("LyricsPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Show lyrics earlier" }));
     expect(screen.getByText("+0.5s")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Second" })).toHaveAttribute("aria-current", "true");
+  });
+
+  it("moves to the next line between position updates while playing", () => {
+    const frames: FrameRequestCallback[] = [];
+    let now = 1000;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => frames.push(callback));
+    vi.stubGlobal("cancelAnimationFrame", () => undefined);
+    try {
+      render(<LyricsPanel state={synced} position={3.8} playing onSeek={() => undefined} trackKey="a" />);
+      expect(screen.getByRole("button", { name: "First" })).toHaveAttribute("aria-current", "true");
+      now += 300;
+      act(() => frames.shift()?.(now));
+      expect(screen.getByRole("button", { name: "Second" })).toHaveAttribute("aria-current", "true");
+    } finally {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    }
   });
 
   it("shows plain, loading and missing states", () => {

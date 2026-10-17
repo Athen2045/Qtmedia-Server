@@ -7,7 +7,9 @@ import { formatDuration, mediaTitle } from "../lib/library";
 import { useOptionalPlayer } from "../lib/player";
 import { createResumeStore, type ResumeStore } from "../lib/resume";
 import { useStableVolume } from "../lib/stableVolume";
-import { languageTag, pickTrack, readSubtitleChoice, trackLabels, writeSubtitleChoice, type Subtitles } from "../lib/subtitles";
+import { usePlayableSource } from "../lib/playableSource";
+import { languageTag, pickTrack, readSubtitleChoice, trackLabels, useSubtitles, writeSubtitleChoice } from "../lib/subtitles";
+import { readAutoplay, readVideoVolume, writeAutoplay, writeVideoVolume } from "../lib/videoPrefs";
 import { Icon } from "./Icon";
 import { VideoControls } from "./VideoControls";
 
@@ -15,43 +17,6 @@ import { VideoControls } from "./VideoControls";
 const SAVE_INTERVAL_MS = 5000;
 /** Seconds the "Up next" card counts down before the next video starts. */
 export const AUTOPLAY_SECONDS = 5;
-const AUTOPLAY_KEY = "qtmedia.video.autoplay";
-const VOLUME_KEY = "qtmedia.video.volume";
-
-function readAutoplay() {
-  try {
-    return localStorage.getItem(AUTOPLAY_KEY) !== "off";
-  } catch {
-    return true;
-  }
-}
-
-function writeAutoplay(on: boolean) {
-  try {
-    localStorage.setItem(AUTOPLAY_KEY, on ? "on" : "off");
-  } catch {
-    // A convenience only.
-  }
-}
-
-/** The player's last volume and mute, applied to each video it opens. */
-function readVideoVolume(): { volume: number; muted: boolean } | null {
-  try {
-    const saved = JSON.parse(localStorage.getItem(VOLUME_KEY) ?? "null") as { volume?: unknown; muted?: unknown } | null;
-    if (!saved || typeof saved.volume !== "number" || saved.volume < 0 || saved.volume > 1) return null;
-    return { volume: saved.volume, muted: saved.muted === true };
-  } catch {
-    return null;
-  }
-}
-
-function writeVideoVolume(volume: number, muted: boolean) {
-  try {
-    localStorage.setItem(VOLUME_KEY, JSON.stringify({ volume, muted }));
-  } catch {
-    // A convenience only.
-  }
-}
 /** How long the "Resumed at" note stays before it fades away by itself. */
 const RESUME_NOTE_MS = 6000;
 
@@ -444,110 +409,4 @@ export default function VideoOverlay({ bridge, entry, onClose, resume, navigatio
       </div>
     </div>
   );
-}
-
-/** A video's subtitle tracks; empty while loading, without a bridge, or on errors. */
-function useSubtitles(bridge: DesktopBridge, relativePath: string, token: number): Subtitles & { loading: boolean } {
-  const [state, setState] = useState<Subtitles & { loading: boolean; path: string }>({ tracks: [], unsupported: 0, loading: true, path: relativePath });
-  useEffect(() => {
-    if (!bridge.readSubtitles) {
-      setState({ tracks: [], unsupported: 0, loading: false, path: relativePath });
-      return;
-    }
-    let active = true;
-    setState((current) => (current.path === relativePath ? { ...current, loading: true } : { tracks: [], unsupported: 0, loading: true, path: relativePath }));
-    bridge.readSubtitles(relativePath).then(
-      (result) => { if (active) setState({ tracks: result.tracks ?? [], unsupported: result.unsupported ?? 0, loading: false, path: relativePath }); },
-      () => { if (active) setState({ tracks: [], unsupported: 0, loading: false, path: relativePath }); },
-    );
-    return () => { active = false; };
-  }, [bridge, relativePath, token]);
-  // Never show the previous video's tracks on the next one.
-  return state.path === relativePath ? state : { tracks: [], unsupported: 0, loading: true };
-}
-
-/** Whether this webview decodes Dolby Digital (Plus); Windows editions without
- * the Dolby decoder get AC-3/E-AC-3 converted instead. */
-function decodesDolby() {
-  try {
-    const probe = document.createElement("video");
-    return Boolean(probe.canPlayType('audio/mp4; codecs="ec-3"')) && Boolean(probe.canPlayType('audio/mp4; codecs="ac-3"'));
-  } catch {
-    return false;
-  }
-}
-
-type PlayableSource =
-  | { kind: "checking" }
-  | { kind: "ready"; src: string }
-  | { kind: "preparing"; id: string; mode: "remux" | "transcode" | "preparing"; percent: number | null }
-  | { kind: "failed" }
-  | { kind: "unavailable" };
-
-/**
- * The URL the player can play for a library video: the file itself, or a
- * prepared copy for formats the webview can't play as they are (MKV, MOV,
- * AVI, AC-3 audio …). Closing the player stops an unfinished preparation.
- */
-function usePlayableSource(bridge: DesktopBridge, relativePath: string): PlayableSource {
-  const [source, setSource] = useState<PlayableSource>(() => (
-    !bridge.mediaUrl ? { kind: "unavailable" }
-      : bridge.preparePlayback ? { kind: "checking" }
-        : { kind: "ready", src: bridge.mediaUrl(relativePath) }
-  ));
-
-  useEffect(() => {
-    const mediaUrl = bridge.mediaUrl;
-    if (!mediaUrl) return;
-    if (!bridge.preparePlayback) {
-      setSource({ kind: "ready", src: mediaUrl(relativePath) });
-      return;
-    }
-    // A different video: never keep playing the previous one's source.
-    setSource((current) => (current.kind === "checking" ? current : { kind: "checking" }));
-    let active = true;
-    let jobId: string | null = null;
-    let finished = false;
-    let unlisten: (() => void) | null = null;
-    const ready = (url: string) => {
-      finished = true;
-      if (active) setSource({ kind: "ready", src: mediaUrl(url) });
-    };
-    void (async () => {
-      // Listen first so a quick "ready" is never missed.
-      unlisten = (await bridge.subscribePlayback?.((event) => {
-        if (!active || event.id !== jobId) return;
-        if (event.type === "progress") setSource((current) => (current.kind === "preparing" ? { ...current, percent: event.percent } : current));
-        else if (event.type === "ready") ready(event.url);
-        else {
-          finished = true;
-          setSource({ kind: "failed" });
-        }
-      }).catch(() => null)) ?? null;
-      if (!active) {
-        unlisten?.();
-        return;
-      }
-      try {
-        const plan = await bridge.preparePlayback!(relativePath, { dolby: decodesDolby() });
-        if (!active) return;
-        if (plan.kind === "direct") ready(relativePath);
-        else if (plan.kind === "ready") ready(plan.url);
-        else {
-          jobId = plan.id;
-          setSource({ kind: "preparing", id: plan.id, mode: plan.mode, percent: null });
-        }
-      } catch {
-        finished = true;
-        if (active) setSource({ kind: "failed" });
-      }
-    })();
-    return () => {
-      active = false;
-      unlisten?.();
-      if (jobId && !finished) void bridge.cancelPlayback?.(jobId).catch(() => undefined);
-    };
-  }, [bridge, relativePath]);
-
-  return source;
 }

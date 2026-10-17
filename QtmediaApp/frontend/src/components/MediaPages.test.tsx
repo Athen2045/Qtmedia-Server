@@ -187,23 +187,26 @@ describe("Music page and player", () => {
     fireEvent.keyDown(within(queue).getByRole("button", { name: /Song C/ }), { key: "ArrowUp", altKey: true });
     expect(names()).toEqual(["Song A", "Song C", "Song B"]);
     expect(within(queue).getByRole("button", { name: /Song C/ })).toHaveFocus();
-    // The playing song stays pinned at the top.
+    // A song can go above the playing one; the playing song keeps playing.
     fireEvent.keyDown(within(queue).getByRole("button", { name: /Song C/ }), { key: "ArrowUp", altKey: true });
-    expect(names()).toEqual(["Song A", "Song C", "Song B"]);
+    expect(names()).toEqual(["Song C", "Song A", "Song B"]);
+    expect(within(queue).getByRole("button", { name: /Song A/ })).toHaveAttribute("aria-current", "true");
+    expect(within(queue).getByRole("button", { name: /Song C/ })).toHaveTextContent("Played");
 
-    // Drag Song B up one row (rows are 60px apart in this fake layout).
+    // Drag Song B up two rows, above the playing song (rows are 60px apart in this fake layout).
     const rows = [...queue.querySelectorAll("li")];
     rows.forEach((row, index) => {
       row.getBoundingClientRect = () => ({ top: index * 60, height: 56, bottom: index * 60 + 56, left: 0, right: 300, width: 300, x: 0, y: index * 60, toJSON: () => ({}) });
     });
     const songB = rows[2];
     fireEvent.pointerDown(songB, { button: 0, clientY: 130 });
-    fireEvent.pointerMove(window, { clientY: 100 });
     fireEvent.pointerMove(window, { clientY: 72 });
+    fireEvent.pointerMove(window, { clientY: 10 });
     expect(songB).toHaveClass("is-dragging");
-    fireEvent.pointerUp(window, { clientY: 72 });
+    fireEvent.pointerUp(window, { clientY: 10 });
     fireEvent.click(within(songB).getByRole("button"));
-    expect(names()).toEqual(["Song A", "Song B", "Song C"]);
+    expect(names()).toEqual(["Song B", "Song C", "Song A"]);
+    expect(within(queue).getByRole("button", { name: /Song A/ })).toHaveAttribute("aria-current", "true");
     // Dropping did not also play the dragged song.
     expect(screen.getByRole("dialog", { name: "Now playing: Song A" })).toBeInTheDocument();
   });

@@ -77,7 +77,7 @@ class Engine:
         except ValueError as error:
             code = str(error) if str(error) in {"no_formats", "format_unavailable", "provider_unavailable", "source_changed", "source_blocked", "cookies_unavailable"} else "invalid_request"
             self._event(request.request_id, "error", code=code)
-        except Exception:  # protocol output must not expose provider details
+        except Exception:  # noqa: BLE001 - protocol output must not expose provider details
             self._event(request.request_id, "error", code="operation_failed")
 
     def _inspect(self, request: Request) -> None:
@@ -131,7 +131,7 @@ class Engine:
         except RuntimeError as error:
             code = str(error) if str(error) in {"source_changed", "source_blocked"} else "download_failed"
             self._event(request_id, "error", code=code, job_id=job_id)
-        except Exception:
+        except Exception:  # noqa: BLE001 - a failed job must still report and clean up
             self._event(request_id, "error", code="download_failed", job_id=job_id)
         finally:
             self.session.remove_job(job_id)

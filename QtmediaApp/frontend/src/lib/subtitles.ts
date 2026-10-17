@@ -1,3 +1,7 @@
+import { useEffect, useState } from "react";
+
+import type { DesktopBridge } from "./bridge";
+
 /** Subtitle tracks of a library video, as `read_subtitles` returns them. */
 export type SubtitleTrack = {
   /** `file:<name>` or `stream:<index>`. */
@@ -93,4 +97,24 @@ export function trackLabels(tracks: SubtitleTrack[]): string[] {
     seen.set(label, count);
     return count === 1 ? label : `${label} (${count})`;
   });
+}
+
+/** A video's subtitle tracks; empty while loading, without a bridge, or on errors. */
+export function useSubtitles(bridge: DesktopBridge, relativePath: string, token: number): Subtitles & { loading: boolean } {
+  const [state, setState] = useState<Subtitles & { loading: boolean; path: string }>({ tracks: [], unsupported: 0, loading: true, path: relativePath });
+  useEffect(() => {
+    if (!bridge.readSubtitles) {
+      setState({ tracks: [], unsupported: 0, loading: false, path: relativePath });
+      return;
+    }
+    let active = true;
+    setState((current) => (current.path === relativePath ? { ...current, loading: true } : { tracks: [], unsupported: 0, loading: true, path: relativePath }));
+    bridge.readSubtitles(relativePath).then(
+      (result) => { if (active) setState({ tracks: result.tracks ?? [], unsupported: result.unsupported ?? 0, loading: false, path: relativePath }); },
+      () => { if (active) setState({ tracks: [], unsupported: 0, loading: false, path: relativePath }); },
+    );
+    return () => { active = false; };
+  }, [bridge, relativePath, token]);
+  // Never show the previous video's tracks on the next one.
+  return state.path === relativePath ? state : { tracks: [], unsupported: 0, loading: true };
 }

@@ -2,7 +2,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { DesktopBridge, LibraryEntry } from "./bridge";
-import { fileName, mediaTitle, useLibrary } from "./library";
+import { currentLibrary, fileName, loadLibrary, mediaTitle, useLibrary } from "./library";
 import { playlistStore } from "./playlists";
 
 const entry = (relativePath: string): LibraryEntry => ({
@@ -52,6 +52,39 @@ describe("useLibrary", () => {
     const { result } = renderHook(() => useLibrary(bridge));
 
     await waitFor(() => expect(result.current.entries).toHaveLength(1));
+  });
+});
+
+describe("shared loads", () => {
+  it("lets the player join the page's load instead of scanning again", async () => {
+    const listLibrary = vi.fn(async () => [entry("video/A.mp4")]);
+    const bridge = { listLibrary } as unknown as DesktopBridge;
+
+    const page = loadLibrary(bridge);
+    const player = currentLibrary(bridge);
+
+    expect(await player).toEqual(await page);
+    expect(listLibrary).toHaveBeenCalledTimes(1);
+    await currentLibrary(bridge);
+    expect(listLibrary).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows the last list at once when a page opens again, unless the library changed", async () => {
+    const listLibrary = vi.fn(async () => [entry("video/A.mp4")]);
+    const bridge = { listLibrary } as unknown as DesktopBridge;
+    const first = renderHook(() => useLibrary(bridge, 3));
+    await waitFor(() => expect(first.result.current.loading).toBe(false));
+    first.unmount();
+
+    const again = renderHook(() => useLibrary(bridge, 3));
+    expect(again.result.current.entries).toHaveLength(1);
+    expect(again.result.current.loading).toBe(true);
+    await waitFor(() => expect(again.result.current.loading).toBe(false));
+    expect(listLibrary).toHaveBeenCalledTimes(2);
+
+    const changed = renderHook(() => useLibrary(bridge, 4));
+    expect(changed.result.current.entries).toHaveLength(0);
+    await waitFor(() => expect(changed.result.current.entries).toHaveLength(1));
   });
 });
 

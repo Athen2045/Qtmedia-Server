@@ -119,7 +119,7 @@ full toolchain and protocol details.
 
 ```bash
 # CLI and shared core
-ruff check Qtmedia
+ruff check Qtmedia QtmediaApp/sidecar
 pytest -q Qtmedia/tests
 
 # Desktop engine
@@ -142,9 +142,9 @@ only touch Markdown or `docs/` skip CI.
 
 | Job | Runner | Checks |
 | --- | --- | --- |
-| Lint | Ubuntu | Ruff on `Qtmedia/` |
+| Lint | Ubuntu | Ruff on `Qtmedia/` and `QtmediaApp/sidecar/` |
 | Test | Ubuntu, Python 3.12 / 3.13 / 3.14 | Compile check and pytest for the CLI |
-| Desktop app | Windows | Engine and desktop-service pytest, Vitest, `tsc` + Vite build, `cargo fmt --check`, `cargo test --locked` |
+| Desktop app | Windows | Engine and desktop-service pytest, Vitest, `tsc` + Vite build, `cargo fmt --check`, `cargo test --locked` (with the pinned FFmpeg, cached between runs) |
 
 CI runners have no audio device. Audio engine tests use a fake output and a
 manual clock.

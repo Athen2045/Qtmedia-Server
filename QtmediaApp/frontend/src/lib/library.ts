@@ -50,9 +50,33 @@ export type LibraryState = {
   retry(): void;
 };
 
+/** The last list a page loaded per bridge: a page opened again shows it at once while
+ * it refreshes, unless the library changed since (`refreshToken` moved on). */
+const lastEntries = new WeakMap<DesktopBridge, { refreshToken: number; entries: LibraryEntry[] }>();
+/** The load in progress per bridge, for callers that can use any current list. */
+const inFlight = new WeakMap<DesktopBridge, Promise<LibraryEntry[]>>();
+
+/** Moves playlists and resume positions to renamed files, then lists the library. */
+export function loadLibrary(bridge: DesktopBridge): Promise<LibraryEntry[]> {
+  const renamed = bridge.libraryRenames?.().then(applyRenames, () => undefined) ?? Promise.resolve();
+  const load = renamed.then(() => bridge.listLibrary());
+  inFlight.set(bridge, load);
+  const settle = () => { if (inFlight.get(bridge) === load) inFlight.delete(bridge); };
+  load.then(settle, settle);
+  return load;
+}
+
+/** Joins a load already running (the open page's, at startup) instead of scanning again. */
+export function currentLibrary(bridge: DesktopBridge): Promise<LibraryEntry[]> {
+  return inFlight.get(bridge) ?? loadLibrary(bridge);
+}
+
 /** Loads the active library and reloads when `refreshToken` changes. */
 export function useLibrary(bridge: DesktopBridge, refreshToken = 0): LibraryState {
-  const [entries, setEntries] = useState<LibraryEntry[]>([]);
+  const [entries, setEntries] = useState<LibraryEntry[]>(() => {
+    const last = lastEntries.get(bridge);
+    return last?.refreshToken === refreshToken ? last.entries : [];
+  });
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [retryToken, setRetryToken] = useState(0);
@@ -61,9 +85,8 @@ export function useLibrary(bridge: DesktopBridge, refreshToken = 0): LibraryStat
     let mounted = true;
     setLoading(true);
     setFailed(false);
-    // Playlists and resume positions follow files renamed to clean names first.
-    const renamed = bridge.libraryRenames?.().then(applyRenames, () => undefined) ?? Promise.resolve();
-    void renamed.then(() => bridge.listLibrary()).then((items) => {
+    void loadLibrary(bridge).then((items) => {
+      lastEntries.set(bridge, { refreshToken, entries: items });
       if (!mounted) return;
       setEntries(items);
       setLoading(false);
@@ -90,8 +113,4 @@ export function useLibrary(bridge: DesktopBridge, refreshToken = 0): LibraryStat
   }, [bridge]);
 
   return { entries, loading, failed, retry: () => setRetryToken((value) => value + 1) };
-}
-
-export function newestFirst(entries: LibraryEntry[]) {
-  return [...entries].sort((left, right) => right.modifiedAt - left.modifiedAt);
 }

@@ -821,9 +821,3 @@ pub async fn update_ytdlp(
         "channel": active.get("channel"),
     }))
 }
-
-pub fn main_window<R: tauri::Runtime>(
-    manager: &impl Manager<R>,
-) -> Option<tauri::WebviewWindow<R>> {
-    manager.get_webview_window("main")
-}

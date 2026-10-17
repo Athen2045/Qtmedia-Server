@@ -141,9 +141,8 @@ main { position: relative; z-index: 2; flex: 1; min-height: 0; }
 .field--search { width: 200px; }
 
 .sort-menu { position: relative; display: inline-flex; align-items: center; }
-.sort-menu select { height: 28px; padding: 0 26px 0 10px; border: 0; border-radius: 7px; background: transparent; color: var(--text-2); font-size: 13px; font-weight: 500; appearance: none; }
+.sort-menu select { height: 28px; padding: 0 26px 0 10px; border: 0; border-radius: 7px; background: transparent; color: var(--text-2); font-size: 13px; font-weight: 500; }
 .sort-menu select:hover { background: var(--hover); color: var(--text); }
-.sort-menu option { background: var(--bg-pop); color: var(--text); }
 .sort-menu svg { position: absolute; right: 7px; width: 14px; height: 14px; color: var(--text-2); pointer-events: none; }
 
 .dl-indicator { display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 10px 0 6px; border: 0; border-radius: 7px; background: var(--field); color: var(--text-2); font-size: 12.5px; font-variant-numeric: tabular-nums; }
@@ -375,6 +374,9 @@ progress.meter:indeterminate::-webkit-progress-bar { background: transparent; }
 .np-item { display: flex; align-items: center; gap: 14px; width: 100%; padding: 8px 10px; border: 0; border-radius: 10px; background: transparent; color: #fff; text-align: left; opacity: .7; transition: background 120ms var(--ease), opacity 120ms var(--ease); }
 .np-item:hover { background: rgba(255, 255, 255, .08); opacity: 1; }
 .np-item.is-current { background: rgba(255, 255, 255, .13); opacity: 1; }
+/* Songs already played stay in the queue, dimmed, so songs can be moved above the playing one. */
+.np-item.is-past { opacity: .42; }
+.np-item.is-past:hover { opacity: .8; }
 .np-item__art { width: 44px; height: 44px; flex: none; border-radius: 6px; }
 .np-item__copy { display: grid; flex: 1; min-width: 0; }
 .np-item__copy strong { overflow: hidden; font-size: 14.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
@@ -735,3 +737,44 @@ body.is-reordering, body.is-reordering * { cursor: grabbing !important; user-sel
 @media (max-width: 700px) {
   .vbar-time { display: none; }
 }
+
+/* While the window is being resized (html.is-resizing, lib/resizeHint.ts),
+   nothing animates: transitions would otherwise trail behind the moving edge. */
+.is-resizing *, .is-resizing *::before, .is-resizing *::after { transition: none !important; }
+
+/* ---------- Scrollbars (2026-10-18) ----------
+   One minimal style everywhere: a thin rounded thumb on no track, brighter
+   on hover. (Lyrics and Up Next keep theirs hidden.) */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-button { display: none; }
+::-webkit-scrollbar-thumb { min-height: 36px; border: 3px solid transparent; border-radius: 999px; background: rgba(255, 255, 255, .14) padding-box; }
+::-webkit-scrollbar-thumb:hover { background-color: rgba(255, 255, 255, .28); }
+::-webkit-scrollbar-thumb:active { background-color: rgba(255, 255, 255, .36); }
+
+/* ---------- Drop-downs (2026-10-18) ----------
+   Native <select> in the customisable "base-select" mode (Chromium 135+;
+   WebView2 here is 155), so the list matches the app's menus while keeping
+   native keyboard and accessibility behaviour. Older engines fall back to
+   the plain native list. */
+select, ::picker(select) { appearance: base-select; }
+select { display: inline-flex; align-items: center; gap: 8px; height: 28px; padding: 0 9px 0 10px; border: 0; border-radius: 7px; background: var(--field); color: var(--text); font-size: 13px; font-weight: 500; cursor: default; transition: background 120ms var(--ease); }
+select:hover:not(:disabled) { background: var(--control); }
+select:disabled { opacity: .45; }
+select:focus-visible { outline: 0; box-shadow: 0 0 0 3px var(--accent-soft), inset 0 0 0 1px var(--accent); }
+/* A small chevron that flips while the list is open. */
+select::picker-icon { content: ""; width: 6px; height: 6px; margin: -3px 2px 0 0; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; color: var(--text-2); rotate: 45deg; transition: rotate 160ms var(--ease), translate 160ms var(--ease); }
+select:open::picker-icon { rotate: 225deg; translate: 0 3px; }
+::picker(select) { min-width: anchor-size(width); margin-block: 4px; padding: 5px; border: 1px solid var(--sep-strong); border-radius: 10px; background: var(--bg-pop); box-shadow: 0 18px 50px rgba(0, 0, 0, .55); color: var(--text); opacity: 1; transition: opacity 120ms var(--ease), translate 120ms var(--ease), display 120ms allow-discrete, overlay 120ms allow-discrete; }
+@starting-style { ::picker(select) { opacity: 0; translate: 0 -4px; } }
+option { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 0 12px 0 8px; border-radius: 6px; background: transparent; color: var(--text); font-size: 13px; white-space: nowrap; }
+option::checkmark { content: ""; width: 4px; height: 8px; margin: -3px 3px 0 3px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; rotate: 45deg; visibility: hidden; }
+option:checked::checkmark { visibility: visible; }
+option:checked { font-weight: 500; }
+option:hover, option:focus-visible { outline: 0; background: var(--accent); color: #fff; }
+option:disabled { color: var(--text-3); }
+/* Toolbar sort menus are quiet text buttons; they keep their own chevron. */
+.sort-menu select { background: transparent; color: var(--text-2); padding-right: 26px; }
+.sort-menu select:hover { background: var(--hover); color: var(--text); }
+.sort-menu select::picker-icon { display: none; }
+.row-select { max-width: 240px; }
