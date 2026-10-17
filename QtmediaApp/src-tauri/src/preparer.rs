@@ -84,6 +84,14 @@ impl Preparer {
         &self.cache_dir
     }
 
+    pub fn ffprobe(&self) -> &Path {
+        &self.ffprobe
+    }
+
+    pub fn ffmpeg(&self) -> &Path {
+        &self.ffmpeg
+    }
+
     fn probe(&self, path: &Path) -> Result<Probe, &'static str> {
         let output = command(&self.ffprobe)
             .args([

@@ -25,7 +25,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 
 use super::convert::Converter;
 use super::decoder::{DecodeError, Decoder, SourceFormat};
-use super::format::{negotiate, DeviceCaps, Negotiated, OutputMode, Policy, RateMismatch};
+use super::format::{negotiate, DeviceCaps, Negotiated, OutputMode, Policy, RateMismatch, Reason};
 use super::output::{Output, OutputError};
 
 /// Seconds of converted audio the feeder keeps ahead of the device.
@@ -63,7 +63,12 @@ pub struct Settings {
     pub mode: OutputMode,
     pub rate_mismatch: RateMismatch,
     pub exclusive_volume: bool,
+    /// Play songs at one loudness (where software volume is allowed).
+    pub levelling: bool,
 }
+
+/// A song's loudness-levelling gain, if it has been measured.
+pub type Leveler = Arc<dyn Fn(&Path) -> Option<f32> + Send + Sync>;
 
 impl Default for Settings {
     fn default() -> Self {
@@ -72,6 +77,7 @@ impl Default for Settings {
             mode: OutputMode::Shared,
             rate_mismatch: RateMismatch::Strict,
             exclusive_volume: false,
+            levelling: true,
         }
     }
 }
@@ -448,6 +454,14 @@ fn apply_gain_f32(bytes: &mut [u8], gain: f32) {
 /// Where the software volume is applied: at the renderer for float outputs
 /// (instant), else in the converter (exclusive integer output with the
 /// opt-in exclusive volume).
+/// A levelled track is never bit-perfect; its signal path says why.
+fn apply_level(negotiated: &mut Negotiated, level: f32) {
+    if level != 1.0 && negotiated.bit_perfect {
+        negotiated.bit_perfect = false;
+        negotiated.reason = Some(Reason::VolumeLevelling);
+    }
+}
+
 fn split_gain(negotiated: &Negotiated) -> (f32, f32) {
     if negotiated.output.float {
         (1.0, negotiated.gain)
@@ -458,6 +472,19 @@ fn split_gain(negotiated: &Negotiated) -> (f32, f32) {
 
 // ---------------------------------------------------------------------------
 // Workers: where the feeder and renderer run.
+
+/// Registers the calling thread with MMCSS as a "Pro Audio" task. Best
+/// effort: without the service the thread just keeps normal priority.
+fn boost_render_thread() {
+    #[cfg(windows)]
+    unsafe {
+        let mut task_index = 0u32;
+        let _ = windows::Win32::System::Threading::AvSetMmThreadCharacteristicsW(
+            windows::core::w!("Pro Audio"),
+            &mut task_index,
+        );
+    }
+}
 
 pub struct Session {
     id: u64,
@@ -607,6 +634,8 @@ impl Workers for InlineWorkers {
 struct Track {
     path: PathBuf,
     source: SourceFormat,
+    /// Loudness-levelling gain in use for this track (1.0 = none).
+    level: f32,
     /// What negotiation asked for (the open key) and what is in use.
     requested: Negotiated,
 }
@@ -625,6 +654,7 @@ struct Engine<W: Workers> {
     workers: W,
     settings: Settings,
     volume: f32,
+    leveler: Leveler,
     caps: Option<Box<dyn DeviceCaps>>,
     /// Requested and actual negotiation of the open output.
     open: Option<(Negotiated, Negotiated)>,
@@ -651,6 +681,7 @@ impl<W: Workers> Engine<W> {
             workers,
             settings,
             volume: volume.clamp(0.0, 1.0),
+            leveler: Arc::new(|_| None),
             caps: None,
             open: None,
             state: PlayState::Idle,
@@ -665,6 +696,18 @@ impl<W: Workers> Engine<W> {
             last_position: None,
             events: Vec::new(),
         }
+    }
+
+    /// The levelling gain for `path` on `actual`: none when levelling is off
+    /// or software volume is not allowed (bit-perfect exclusive stays exact).
+    fn level_for(&self, path: &Path, actual: &Negotiated) -> f32 {
+        let allowed = actual.mode == OutputMode::Shared || self.settings.exclusive_volume;
+        if !self.settings.levelling || !allowed {
+            return 1.0;
+        }
+        (self.leveler)(path)
+            .filter(|gain| gain.is_finite() && *gain > 0.0)
+            .unwrap_or(1.0)
     }
 
     fn policy(&self) -> Policy {
@@ -744,6 +787,7 @@ impl<W: Workers> Engine<W> {
             Track {
                 path: path.to_path_buf(),
                 source,
+                level: 1.0,
                 requested,
             },
         ))
@@ -796,9 +840,14 @@ impl<W: Workers> Engine<W> {
         let policy = self.policy();
         let bluetooth = self.bluetooth();
         actual.apply_volume(&track.source, &policy, bluetooth);
+        let mut track = track;
+        track.level = self.level_for(&track.path, &actual);
+        apply_level(&mut actual, track.level);
         let (converter_gain, render_gain) = split_gain(&actual);
         let mut converter = Converter::new(&track.source, &actual);
         converter.set_gain(converter_gain);
+        converter.set_level(track.level);
+        converter.set_bluetooth(bluetooth);
         let format = actual.output;
         let capacity = (format.rate as usize * RING_SECONDS).max(1) * format.bytes_per_frame();
         let (producer, consumer) = RingBuffer::new(capacity);
@@ -888,8 +937,13 @@ impl<W: Workers> Engine<W> {
         let policy = self.policy();
         let bluetooth = self.bluetooth();
         actual.apply_volume(&track.source, &policy, bluetooth);
+        let mut track = track;
+        track.level = self.level_for(&track.path, &actual);
+        apply_level(&mut actual, track.level);
         let mut converter = Converter::new(&track.source, &actual);
         converter.set_gain(split_gain(&actual).0);
+        converter.set_level(track.level);
+        converter.set_bluetooth(bluetooth);
         self.next = Some((track, true));
         Some(NextTrack { decoder, converter })
     }
@@ -899,6 +953,14 @@ impl<W: Workers> Engine<W> {
             self.workers.pause();
             self.paused_at = Some(now);
             self.set_state(PlayState::Paused);
+            // Exclusive mode silences every other app: give the device back
+            // at once, so browsers and other players can open it while paused.
+            if self
+                .open
+                .is_some_and(|(_, actual)| actual.mode == OutputMode::Exclusive)
+            {
+                self.release();
+            }
         }
     }
 
@@ -923,6 +985,11 @@ impl<W: Workers> Engine<W> {
             return;
         };
         let running = self.state == PlayState::Playing;
+        if !running && self.released_at.is_some() {
+            // Stay released; resume opens the device at the new position.
+            self.released_at = Some(seconds.max(0.0));
+            return;
+        }
         let paused_at = self.paused_at;
         self.next = None;
         self.start(&path, seconds, running, Announce::Quiet);
@@ -966,9 +1033,11 @@ impl<W: Workers> Engine<W> {
             return;
         };
         let before = actual;
+        let level = current.track.level;
         let policy = self.policy();
         let bluetooth = self.bluetooth();
         actual.apply_volume(&source, &policy, bluetooth);
+        apply_level(&mut actual, level);
         self.open = Some((requested, actual));
         let (converter, render) = split_gain(&actual);
         self.workers.set_gain(converter, render);
@@ -1182,6 +1251,12 @@ pub struct ManualEngine {
 }
 
 impl ManualEngine {
+    /// Songs play at the gains `leveler` reports (see `loudness.rs`).
+    pub fn with_leveler(mut self, leveler: Leveler) -> Self {
+        self.engine.leveler = leveler;
+        self
+    }
+
     pub fn new(platform: Arc<dyn Platform>, settings: Settings, volume: f32) -> Self {
         let workers = InlineWorkers {
             platform: Some(platform.clone()),
@@ -1354,6 +1429,7 @@ impl AudioEngine {
         platform: Arc<dyn Platform>,
         settings: Settings,
         volume: f32,
+        leveler: Leveler,
         mut on_event: impl FnMut(Event) + Send + 'static,
     ) -> std::io::Result<Self> {
         let (commands, inbox) = mpsc::channel::<Message>();
@@ -1371,7 +1447,12 @@ impl AudioEngine {
         let render_played = played.clone();
         let renderer = std::thread::Builder::new()
             .name("qtmedia-audio-render".into())
-            .spawn(move || render_loop(render_platform, render_inbox, reports, render_played))?;
+            .spawn(move || {
+                // Windows schedules "Pro Audio" threads ahead of normal work, so
+                // a busy CPU (ffmpeg, covers, a 4K remux) cannot starve output.
+                boost_render_thread();
+                render_loop(render_platform, render_inbox, reports, render_played)
+            })?;
 
         let control = std::thread::Builder::new()
             .name("qtmedia-audio-control".into())
@@ -1382,6 +1463,7 @@ impl AudioEngine {
                     played,
                 };
                 let mut engine = Engine::new(platform, workers, settings, volume);
+                engine.leveler = leveler;
                 loop {
                     let wait = if engine.boundary_due() {
                         FAST_TICK

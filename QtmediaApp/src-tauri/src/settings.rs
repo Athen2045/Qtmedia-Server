@@ -109,7 +109,7 @@ pub enum RateMismatchPreference {
 
 const MAX_DEVICE_ID_LENGTH: usize = 512;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioPreference {
     /// Endpoint ID; `None` follows the Windows default output.
@@ -122,6 +122,25 @@ pub struct AudioPreference {
     /// Software volume in exclusive mode (drops bit-perfect below 100 %).
     #[serde(default)]
     pub exclusive_volume: bool,
+    /// Play songs at one loudness. On by default (older files load as on).
+    #[serde(default = "levelling_default")]
+    pub levelling: bool,
+}
+
+fn levelling_default() -> bool {
+    true
+}
+
+impl Default for AudioPreference {
+    fn default() -> Self {
+        Self {
+            device_id: None,
+            mode: AudioMode::default(),
+            rate_mismatch: RateMismatchPreference::default(),
+            exclusive_volume: false,
+            levelling: true,
+        }
+    }
 }
 
 /// Rejects device IDs that are not plausible Windows endpoint IDs.

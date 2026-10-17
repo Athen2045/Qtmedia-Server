@@ -1,9 +1,13 @@
 pub mod audio;
 pub mod audio_commands;
 pub mod commands;
+pub mod covers;
+pub mod durations;
 pub mod import;
+pub mod loudness;
 pub mod lyrics;
 pub mod media;
+pub mod names;
 pub mod paths;
 pub mod playback;
 pub mod preparer;
@@ -11,6 +15,7 @@ pub mod protocol;
 pub mod removal;
 pub mod settings;
 pub mod sidecar;
+pub mod subtitles;
 
 use std::sync::Arc;
 
@@ -46,6 +51,17 @@ pub fn run() {
                             request.uri().path(),
                             range.as_deref(),
                         )
+                    })
+                });
+                let playback = playback.or_else(|| {
+                    media::subtitle_name(request.uri().path()).and_then(|_| {
+                        app.try_state::<subtitles::SubtitleCache>().map(|cache| {
+                            media::serve_subtitle(
+                                &cache.0,
+                                request.method().as_str(),
+                                request.uri().path(),
+                            )
+                        })
                     })
                 });
                 let served = match (
@@ -87,6 +103,13 @@ pub fn run() {
             let library_root = location.root;
             paths::prepare_library(&library_root)
                 .map_err(|error| format!("library initialization failed: {error:?}"))?;
+            // Clean names before the engine or the UI can see the files.
+            let playback_cache = app.path().app_local_data_dir()?.join("playback-cache");
+            names::tidy_library(
+                &library_root,
+                Some(&playback_cache),
+                &preference_path.with_file_name("renames.json"),
+            );
             let network = settings::load_network(&preference_path);
             let audio_preference = settings::load_audio(&preference_path);
             let sidecar =
@@ -106,15 +129,30 @@ pub fn run() {
                 sidecar::bundled_binary_sibling(&exe, &format!("{name}{suffix}"))
                     .unwrap_or_default()
             };
+            app.manage(Arc::new(covers::CoverJobs::default()));
+            app.manage(subtitles::SubtitleCache(
+                app.path().app_local_data_dir()?.join("subtitle-cache"),
+            ));
+            app.manage(Arc::new(durations::DurationCache::new(
+                app.path().app_local_data_dir()?.join("durations.json"),
+            )));
             let prepare_events = app.handle().clone();
             app.manage(Arc::new(preparer::Preparer::new(
                 tool("ffmpeg"),
                 tool("ffprobe"),
-                app.path().app_local_data_dir()?.join("playback-cache"),
+                playback_cache,
                 Arc::new(move |payload| {
                     let _ = prepare_events.emit("playback-prepare", payload);
                 }),
             )));
+            // Loudness levelling: measured songs play at one level.
+            let loudness = Arc::new(loudness::LoudnessCache::new(
+                app.path().app_local_data_dir()?.join("loudness.json"),
+            ));
+            app.manage(Arc::clone(&loudness));
+            let leveler: audio::engine::Leveler = Arc::new(move |song: &std::path::Path| {
+                loudness.get(song).map(loudness::level_gain)
+            });
             let events = app.handle().clone();
             let roots = app.handle().clone();
             app.manage(Arc::new(audio::service::AudioService::new(
@@ -127,6 +165,7 @@ pub fn run() {
                         .try_state::<commands::AppState>()
                         .and_then(|state| state.library_root().ok())
                 }),
+                leveler,
             )));
             let probe = sidecar;
             tauri::async_runtime::spawn(async move {
@@ -139,6 +178,7 @@ pub fn run() {
             commands::start_download,
             commands::cancel_download,
             commands::list_library,
+            commands::library_renames,
             commands::open_media,
             commands::open_library,
             commands::read_artwork,
@@ -159,6 +199,8 @@ pub fn run() {
             commands::prepare_playback,
             commands::import_media,
             commands::cancel_playback,
+            commands::read_subtitles,
+            commands::add_subtitles,
             commands::window_close,
             audio_commands::audio_play,
             audio_commands::audio_pause,

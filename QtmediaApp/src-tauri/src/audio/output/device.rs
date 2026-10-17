@@ -10,14 +10,27 @@ use windows::Win32::Media::Audio::{IMMDeviceEnumerator, MMDeviceEnumerator};
 use windows::Win32::System::Com::StructuredStorage::{PropVariantClear, PropVariantToStringAlloc};
 use windows::Win32::System::Com::{CoCreateInstance, CoTaskMemFree, CLSCTX_ALL, STGM_READ};
 
-use super::{classify_transport, map_hresult, DeviceInfo, OutputError, Transport};
+use super::{
+    avoid_hands_free, endpoint_transport, map_hresult, DeviceInfo, Endpoint, OutputError, Transport,
+};
 use crate::audio::format::{DeviceCaps, PcmFormat};
 
+/// `PKEY_Device_ContainerId`: shared by every endpoint of one physical device.
+const PKEY_DEVICE_CONTAINER_ID: PROPERTYKEY = PROPERTYKEY {
+    fmtid: GUID::from_u128(0x8c7ed206_3f8a_4827_b3ab_ae9e1faefc6c),
+    pid: 2,
+};
+
 /// Endpoint properties written by the audio endpoint builder: the device
-/// instance path (`BTHENUM\{service-uuid}…` for Bluetooth) and the adapter
-/// driver description.
+/// instance path of the endpoint's driver (`BTHENUM\{service-uuid}…` for
+/// Windows' own Bluetooth drivers), the Bluetooth path recorded by offloading
+/// drivers, and the adapter driver description.
 const ENDPOINT_PROPERTIES: GUID = GUID::from_u128(0xb3f8fa53_0004_438e_9003_51a46e139bfc);
-const PKEY_ENDPOINT_INSTANCE_PATH: PROPERTYKEY = PROPERTYKEY {
+const PKEY_ENDPOINT_DEVICE_PATH: PROPERTYKEY = PROPERTYKEY {
+    fmtid: ENDPOINT_PROPERTIES,
+    pid: 2,
+};
+const PKEY_ENDPOINT_BLUETOOTH_PATH: PROPERTYKEY = PROPERTYKEY {
     fmtid: ENDPOINT_PROPERTIES,
     pid: 39,
 };
@@ -51,11 +64,39 @@ pub(super) fn ensure_com() {
 
 pub(super) fn find_device(id: Option<&str>) -> Result<Device, OutputError> {
     let enumerator = DeviceEnumerator::new().map_err(map_error)?;
-    match id {
+    let device = match id {
         Some(id) => enumerator.get_device(id),
         None => enumerator.get_default_device(&Direction::Render),
     }
-    .map_err(map_error)
+    .map_err(map_error)?;
+    let chosen = device.get_id().map_err(map_error)?;
+    if transport_of(&chosen) != Transport::BluetoothHandsFree {
+        return Ok(device);
+    }
+    // Never play through a Hands-Free endpoint (mono call quality); use the
+    // same headset's stereo endpoint.
+    let endpoints = render_endpoints(&enumerator)?;
+    match avoid_hands_free(&chosen, &endpoints) {
+        Some(stereo) => enumerator.get_device(&stereo).map_err(map_error),
+        None => Err(OutputError::HandsFreeOnly),
+    }
+}
+
+fn render_endpoints(enumerator: &DeviceEnumerator) -> Result<Vec<Endpoint>, OutputError> {
+    let collection = enumerator
+        .get_device_collection(&Direction::Render)
+        .map_err(map_error)?;
+    let mut endpoints = Vec::new();
+    for device in &collection {
+        let id = device.map_err(map_error)?.get_id().map_err(map_error)?;
+        endpoints.push(Endpoint {
+            transport: transport_of(&id),
+            container: endpoint_string(&id, &PKEY_DEVICE_CONTAINER_ID)
+                .map(|value| value.to_ascii_lowercase()),
+            id,
+        });
+    }
+    Ok(endpoints)
 }
 
 pub(super) fn to_waveformat(format: &PcmFormat) -> WaveFormat {
@@ -107,8 +148,9 @@ fn endpoint_string(id: &str, key: &PROPERTYKEY) -> Option<String> {
 }
 
 pub(super) fn transport_of(id: &str) -> Transport {
-    classify_transport(
-        &endpoint_string(id, &PKEY_ENDPOINT_INSTANCE_PATH).unwrap_or_default(),
+    endpoint_transport(
+        &endpoint_string(id, &PKEY_ENDPOINT_BLUETOOTH_PATH).unwrap_or_default(),
+        &endpoint_string(id, &PKEY_ENDPOINT_DEVICE_PATH).unwrap_or_default(),
         &endpoint_string(id, &PKEY_ENDPOINT_ADAPTER).unwrap_or_default(),
     )
 }
@@ -128,9 +170,15 @@ pub fn list_devices() -> Result<Vec<DeviceInfo>, OutputError> {
     for device in &collection {
         let device = device.map_err(map_error)?;
         let id = device.get_id().map_err(map_error)?;
+        let transport = transport_of(&id);
+        // Hands-Free endpoints are never offered: playing through one puts the
+        // headset in call mode.
+        if transport == Transport::BluetoothHandsFree {
+            continue;
+        }
         devices.push(DeviceInfo {
             name: device.get_friendlyname().unwrap_or_else(|_| id.clone()),
-            transport: transport_of(&id),
+            transport,
             is_default: default_id.as_deref() == Some(id.as_str()),
             id,
         });

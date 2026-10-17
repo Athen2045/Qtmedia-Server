@@ -27,7 +27,7 @@ function plural(count: number, noun: string) {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
-export function FilesPage({ bridge, refreshToken = 0, onGoHome, onShowDownload, onPlayVideo }: { bridge: DesktopBridge; refreshToken?: number; onGoHome?: () => void; onShowDownload?: () => void; onPlayVideo?: (entry: LibraryEntry) => void }) {
+export function FilesPage({ bridge, refreshToken = 0, onGoHome, onShowDownload, onPlayVideo }: { bridge: DesktopBridge; refreshToken?: number; onGoHome?: () => void; onShowDownload?: () => void; onPlayVideo?: (entry: LibraryEntry, list?: LibraryEntry[]) => void }) {
   const { entries, loading, failed, retry } = useLibrary(bridge, refreshToken);
   const player = useOptionalPlayer();
   const [filter, setFilter] = useState<Filter>("all");
@@ -134,7 +134,8 @@ export function FilesPage({ bridge, refreshToken = 0, onGoHome, onShowDownload, 
       const audio = visible.filter((item) => item.mediaType === "audio");
       player.playQueue(audio, audio.indexOf(entry));
     } else if (entry.mediaType === "video" && onPlayVideo) {
-      onPlayVideo(entry);
+      // Next/previous follow the videos in the order Files shows them.
+      onPlayVideo(entry, visible.filter((item) => item.mediaType === "video"));
     } else {
       void bridge.openMedia(entry.relativePath);
     }
@@ -207,7 +208,7 @@ export function FilesPage({ bridge, refreshToken = 0, onGoHome, onShowDownload, 
             </div>
             <label className="field field--search"><span className="sr-only">Search downloaded files</span><Icon name="search" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search" /></label>
             {bridge.importMedia ? <button type="button" className="btn btn-default" disabled={importing} onClick={() => void importFiles()}><Icon name="plus" />{importing ? "Importing…" : "Import"}</button> : null}
-            <button type="button" className="btn btn-default" onClick={() => void bridge.openLibrary()}><Icon name="open" />Open Folder</button>
+            <button type="button" className="btn btn-default" aria-label="Open Folder" title="Open Folder" onClick={() => void bridge.openLibrary()}><Icon name="open" /><span className="btn-label">Open Folder</span></button>
           </>
         )}
       </Toolbar>

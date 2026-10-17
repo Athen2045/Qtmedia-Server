@@ -1,0 +1,184 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Video controls mockup</title>
+<style>
+  :root { --ease: cubic-bezier(.2, 0, 0, 1); --accent: #7b6cf0; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #000; color: #fff; font: 13px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  svg { display: block; width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* A stand-in frame of video. */
+  .frame { position: absolute; inset: 0; overflow: hidden;
+    background:
+      radial-gradient(60% 50% at 70% 38%, rgba(255, 196, 120, .95), rgba(255, 140, 90, .2) 45%, transparent 70%),
+      linear-gradient(180deg, #2a2350 0%, #6a3f6e 38%, #d9806a 58%, #3b2a3a 59%, #1b1a26 100%); }
+  .frame::before { content: ""; position: absolute; left: -5%; right: -5%; top: 56%; height: 22%; background: linear-gradient(180deg, #2b2233, #15141c); clip-path: polygon(0 60%, 12% 30%, 22% 52%, 35% 18%, 48% 48%, 60% 26%, 73% 55%, 86% 22%, 100% 46%, 100% 100%, 0 100%); }
+  .frame::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to top, rgba(0, 0, 0, .38), transparent 26%); }
+
+  /* Title row: close + title only. */
+  .top { position: absolute; z-index: 3; top: 0; left: 0; right: 0; height: 56px; display: flex; align-items: center; gap: 12px; padding: 0 150px 0 16px; background: linear-gradient(180deg, rgba(0, 0, 0, .5), transparent); }
+  .round { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: rgba(20, 20, 22, .4); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .1); backdrop-filter: blur(18px); }
+  .round svg { width: 16px; height: 16px; }
+  .title { font: 500 13.5px/1.2 "Segoe UI Variable Display", "Segoe UI", sans-serif; color: rgba(255, 255, 255, .92); text-shadow: 0 1px 8px rgba(0, 0, 0, .5); }
+  .winbtns { position: absolute; z-index: 4; top: 10px; right: 10px; display: flex; gap: 2px; }
+  .winbtns span { display: grid; place-items: center; width: 40px; height: 36px; color: rgba(255, 255, 255, .82); }
+  .winbtns svg { width: 15px; height: 15px; stroke-width: 1.4; }
+
+  /* The one control bar. Same pixel size in a window and in full screen. */
+  .bar { position: absolute; z-index: 3; left: 0; right: 0; bottom: 22px; margin: 0 auto; width: min(880px, calc(100% - 48px)); height: 52px;
+    display: flex; align-items: center; gap: 2px; padding: 0 10px;
+    border-radius: 16px; background: rgba(18, 18, 20, .46); box-shadow: 0 0 0 1px rgba(255, 255, 255, .09), 0 16px 44px rgba(0, 0, 0, .3); backdrop-filter: blur(28px) saturate(170%); }
+  .b { position: relative; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px; color: rgba(255, 255, 255, .92); }
+  .b.hover { background: rgba(255, 255, 255, .12); }
+  .b.on { color: #fff; }
+  .b.on::after { content: ""; position: absolute; bottom: 3px; width: 12px; height: 2px; border-radius: 2px; background: #fff; }
+  .b.main svg { width: 22px; height: 22px; }
+  .b.dim { color: rgba(255, 255, 255, .35); }
+  .skip { font-size: 7.5px; font-weight: 700; }
+  .time { margin: 0 8px; color: rgba(255, 255, 255, .8); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .seek { position: relative; flex: 1; height: 4px; margin: 0 8px; border-radius: 4px; background: rgba(255, 255, 255, .22); }
+  .seek i { position: absolute; inset: 0 auto 0 0; width: 34%; border-radius: 4px; background: #fff; }
+  .seek b { position: absolute; top: 50%; left: 34%; width: 12px; height: 12px; border-radius: 50%; background: #fff; transform: translate(-50%, -50%); box-shadow: 0 1px 4px rgba(0, 0, 0, .4); }
+  .sep { width: 1px; height: 20px; margin: 0 4px; background: rgba(255, 255, 255, .14); }
+
+  /* "Resumed at" note: small, above the bar, fades with the controls. */
+  .note { position: absolute; z-index: 3; left: 50%; bottom: 88px; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 5px 5px 5px 12px; border-radius: 999px;
+    background: rgba(18, 18, 20, .5); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .1); backdrop-filter: blur(20px); color: rgba(255, 255, 255, .85); font-size: 12px; white-space: nowrap; }
+  .note button { padding: 3px 10px; border: 0; border-radius: 999px; background: rgba(255, 255, 255, .16); color: #fff; font: 600 12px/1.4 inherit; }
+
+  /* Settings menu, opened from the gear. */
+  .menu { position: absolute; z-index: 5; width: 264px; padding: 6px; border-radius: 14px; background: rgba(22, 22, 24, .82); box-shadow: 0 0 0 1px rgba(255, 255, 255, .1), 0 18px 50px rgba(0, 0, 0, .45); backdrop-filter: blur(28px) saturate(170%); }
+  .menu h4 { display: flex; align-items: center; gap: 6px; padding: 6px 8px 8px; color: rgba(255, 255, 255, .55); font-size: 11.5px; font-weight: 600; letter-spacing: .02em; }
+  .menu h4 svg { width: 14px; height: 14px; }
+  .row { display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 10px; border-radius: 9px; }
+  .row.hover { background: rgba(255, 255, 255, .1); }
+  .row svg { width: 17px; height: 17px; color: rgba(255, 255, 255, .7); }
+  .row .label { flex: 1; }
+  .row .label small { display: block; margin-top: -2px; color: rgba(255, 255, 255, .45); font-size: 11px; }
+  .row .value { color: rgba(255, 255, 255, .55); font-size: 12px; }
+  .row .chev { width: 14px; height: 14px; color: rgba(255, 255, 255, .45); }
+  .row.check .tick { width: 16px; color: #fff; }
+  .row.check:not(.sel) .tick { visibility: hidden; }
+  .row.add { color: #c9c2ff; }
+  .row.add svg { color: #c9c2ff; }
+  .div { height: 1px; margin: 5px 8px; background: rgba(255, 255, 255, .09); }
+  .switch { position: relative; flex: none; width: 34px; height: 20px; border-radius: 999px; background: rgba(255, 255, 255, .2); }
+  .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .35); }
+  .switch.on { background: var(--accent); }
+  .switch.on::after { left: 16px; }
+
+  /* Subtitles on screen. */
+  .cue { position: absolute; z-index: 2; left: 50%; bottom: 96px; transform: translateX(-50%); padding: 3px 10px; border-radius: 6px; background: rgba(0, 0, 0, .55); font: 500 22px/1.35 "Segoe UI", sans-serif; white-space: nowrap; }
+
+  /* Callouts (design notes, not UI). */
+  .callout { position: absolute; z-index: 6; padding: 6px 10px; border-radius: 8px; background: #ffd84d; color: #1a1500; font: 600 12px/1.35 "Segoe UI", sans-serif; box-shadow: 0 4px 14px rgba(0, 0, 0, .35); max-width: 260px; }
+  .callout::before { content: attr(data-n); display: inline-grid; place-items: center; width: 18px; height: 18px; margin-right: 6px; border-radius: 50%; background: #1a1500; color: #ffd84d; font-size: 11px; }
+</style>
+</head>
+<body>
+<svg style="display:none" aria-hidden="true">
+  <symbol id="close" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7 7 17"/></symbol>
+  <symbol id="prev" viewBox="0 0 24 24"><path d="M18 6.8v10.4a.8.8 0 0 1-1.25.66l-7.4-5.2a.8.8 0 0 1 0-1.32l7.4-5.2A.8.8 0 0 1 18 6.8z" fill="currentColor" stroke="none"/><path d="M6 6v12"/></symbol>
+  <symbol id="next" viewBox="0 0 24 24"><path d="M6 6.8v10.4a.8.8 0 0 0 1.25.66l7.4-5.2a.8.8 0 0 0 0-1.32l-7.4-5.2A.8.8 0 0 0 6 6.8z" fill="currentColor" stroke="none"/><path d="M18 6v12"/></symbol>
+  <symbol id="pause" viewBox="0 0 24 24"><rect x="7" y="5.5" width="3.5" height="13" rx="1.2" fill="currentColor" stroke="none"/><rect x="13.5" y="5.5" width="3.5" height="13" rx="1.2" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="back10" viewBox="0 0 24 24"><path d="M12 5V2L7 6l5 4V7a6 6 0 1 1-6 6"/><text x="12.4" y="16.6" text-anchor="middle" font-size="7" font-weight="700" fill="currentColor" stroke="none">10</text></symbol>
+  <symbol id="fwd10" viewBox="0 0 24 24"><path d="M12 5V2l5 4-5 4V7a6 6 0 1 0 6 6"/><text x="11.6" y="16.6" text-anchor="middle" font-size="7" font-weight="700" fill="currentColor" stroke="none">10</text></symbol>
+  <symbol id="vol" viewBox="0 0 24 24"><path d="M4.5 9.5v5H8l4.5 4V5.5L8 9.5z"/><path d="M16 9.2a4 4 0 0 1 0 5.6M18.6 6.6a7.6 7.6 0 0 1 0 10.8"/></symbol>
+  <symbol id="cc" viewBox="0 0 24 24"><rect x="3" y="5.5" width="18" height="13" rx="3"/><path d="M10.5 10.2a2.2 2.2 0 1 0 0 3.6M16.5 10.2a2.2 2.2 0 1 0 0 3.6"/></symbol>
+  <symbol id="gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M6 6l1.4 1.4M16.6 16.6 18 18M6 18l1.4-1.4M16.6 7.4 18 6"/></symbol>
+  <symbol id="pip" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><rect x="12" y="11.5" width="6.5" height="5" rx="1.2" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="full" viewBox="0 0 24 24"><path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9M20 15v3.5a1.5 1.5 0 0 1-1.5 1.5H15M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15"/></symbol>
+  <symbol id="exitfull" viewBox="0 0 24 24"><path d="M9 4v3.5A1.5 1.5 0 0 1 7.5 9H4M20 9h-3.5A1.5 1.5 0 0 1 15 7.5V4M15 20v-3.5a1.5 1.5 0 0 1 1.5-1.5H20M4 15h3.5A1.5 1.5 0 0 1 9 16.5V20"/></symbol>
+  <symbol id="wave" viewBox="0 0 24 24"><path d="M4 12h2M8 8v8M12 5v14M16 8v8M20 12h-2"/></symbol>
+  <symbol id="auto" viewBox="0 0 24 24"><path d="M5 6.8v10.4a.8.8 0 0 0 1.25.66l6.4-5.2a.8.8 0 0 0 0-1.32l-6.4-5.2A.8.8 0 0 0 5 6.8z"/><path d="M16 6v12M20 6v12"/></symbol>
+  <symbol id="speed" viewBox="0 0 24 24"><path d="M4.5 16a8 8 0 1 1 15 0"/><path d="m12 16 3.5-5"/></symbol>
+  <symbol id="chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+  <symbol id="back" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></symbol>
+  <symbol id="check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+  <symbol id="plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="min" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+  <symbol id="max" viewBox="0 0 24 24"><rect x="5.5" y="5.5" width="13" height="13" rx="2"/></symbol>
+</svg>
+
+<div class="frame"></div>
+<div id="stage"></div>
+
+<template id="bar">
+  <div class="bar">
+    <span class="b" title="Previous video"><svg><use href="#prev"/></svg></span>
+    <span class="b"><svg><use href="#back10"/></svg></span>
+    <span class="b main"><svg><use href="#pause"/></svg></span>
+    <span class="b"><svg><use href="#fwd10"/></svg></span>
+    <span class="b" title="Next video"><svg><use href="#next"/></svg></span>
+    <span class="sep"></span>
+    <span class="b"><svg><use href="#vol"/></svg></span>
+    <span class="time">12:34 / 38:10</span>
+    <span class="seek"><i></i><b></b></span>
+    <span class="b cc"><svg><use href="#cc"/></svg></span>
+    <span class="b gear"><svg><use href="#gear"/></svg></span>
+    <span class="b"><svg><use href="#pip"/></svg></span>
+    <span class="b fs"><svg><use href="#full"/></svg></span>
+  </div>
+</template>
+
+<template id="top">
+  <div class="top"><span class="round"><svg><use href="#close"/></svg></span><span class="title">Harbour Lights - Live Session</span></div>
+  <div class="winbtns"><span><svg><use href="#min"/></svg></span><span><svg><use href="#max"/></svg></span><span><svg><use href="#close"/></svg></span></div>
+</template>
+
+<template id="menu-main">
+  <div class="menu" style="right: calc((100% - min(880px, 100% - 48px)) / 2 + 52px); bottom: 84px;">
+    <div class="row"><svg><use href="#wave"/></svg><span class="label">Stable volume<small>Evens out loud and quiet parts</small></span><span class="switch on"></span></div>
+    <div class="row"><svg><use href="#auto"/></svg><span class="label">Autoplay next</span><span class="switch on"></span></div>
+    <div class="div"></div>
+    <div class="row hover"><svg><use href="#cc"/></svg><span class="label">Subtitles</span><span class="value">English</span><svg class="chev"><use href="#chev"/></svg></div>
+    <div class="row"><svg><use href="#speed"/></svg><span class="label">Speed</span><span class="value">Normal</span><svg class="chev"><use href="#chev"/></svg></div>
+  </div>
+</template>
+
+<template id="menu-subs">
+  <div class="menu" style="right: calc((100% - min(880px, 100% - 48px)) / 2 + 52px); bottom: 84px;">
+    <h4><svg><use href="#back"/></svg>Subtitles</h4>
+    <div class="row check"><svg class="tick"><use href="#check"/></svg><span class="label">Off</span></div>
+    <div class="row check sel"><svg class="tick"><use href="#check"/></svg><span class="label">English</span></div>
+    <div class="row check"><svg class="tick"><use href="#check"/></svg><span class="label">Español</span></div>
+    <div class="div"></div>
+    <div class="row add hover"><svg><use href="#plus"/></svg><span class="label">Add subtitle file…<small style="color: rgba(201, 194, 255, .6)">.srt or .vtt</small></span></div>
+  </div>
+</template>
+
+<script>
+  const stage = document.getElementById("stage");
+  const add = (id) => stage.append(document.getElementById(id).content.cloneNode(true));
+  const callout = (n, text, style) => { const el = document.createElement("div"); el.className = "callout"; el.dataset.n = n; el.textContent = text; Object.assign(el.style, style); stage.append(el); };
+  const view = location.hash.slice(1) || "window";
+  add("top"); add("bar");
+  const gear = () => stage.querySelector(".gear");
+  const cc = () => stage.querySelector(".cc");
+  if (view === "window") {
+    cc().classList.add("on");
+    const note = document.createElement("div"); note.className = "note"; note.innerHTML = 'Resumed at 12:34 <button>Start over</button>'; stage.append(note);
+    const cue = document.createElement("div"); cue.className = "cue"; cue.style.bottom = "130px"; cue.textContent = "We played this one on the harbour wall"; stage.append(cue);
+    callout(1, "Title row keeps only Close and the title. No more chips.", { top: "64px", left: "16px" });
+    callout(2, "\"Resumed at\" is a small note above the bar; it fades with the controls (and after 6 s).", { bottom: "186px", right: "calc((100% - 880px) / 2)" });
+    callout(3, "Previous / ±10 s / Play / Next move into the bar; the big floating circles go.", { bottom: "84px", left: "calc((100% - 880px) / 2)" });
+    callout(4, "CC turns subtitles on/off in one click (underline = on).", { bottom: "84px", right: "calc((100% - 880px) / 2 + 40px)" });
+  } else if (view === "settings") {
+    gear().classList.add("hover");
+    add("menu-main");
+    callout(5, "Gear: Stable volume and Autoplay as switches, Subtitles and Speed open sub-pages.", { bottom: "290px", right: "calc((100% - 880px) / 2 + 330px)" });
+  } else if (view === "subtitles") {
+    gear().classList.add("hover");
+    add("menu-subs");
+    callout(6, "Subtitles page: pick a track, or add a .srt/.vtt file. Replaces the \"Add subtitles\" chip.", { bottom: "290px", right: "calc((100% - 880px) / 2 + 330px)" });
+  } else if (view === "fullscreen") {
+    cc().classList.add("on");
+    stage.querySelector(".fs use").setAttribute("href", "#exitfull");
+    stage.querySelector(".winbtns").remove();
+    callout(7, "Full screen: the bar stays 880 x 52 px, icons 20 px and 12 px text, the same as in a window. Only the picture grows.", { bottom: "90px", left: "calc(50% - 130px)" });
+  }
+</script>
+</body>
+</html>

@@ -16,8 +16,8 @@
         "title": "Qtmedia",
         "width": 1366,
         "height": 768,
-        "minWidth": 960,
-        "minHeight": 640,
+        "minWidth": 680,
+        "minHeight": 460,
         "decorations": false,
         "resizable": true,
         "center": true

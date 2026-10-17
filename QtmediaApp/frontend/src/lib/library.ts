@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 
 import type { DesktopBridge, LibraryEntry } from "./bridge";
+import { applyRenames } from "./renames";
 
-/** The engine names files `Title [media-<id>].ext` to keep them unique on disk. */
+/** Older engines named files `Title [media-<id>].ext`; the app now renames them
+ * at startup, but a tagged file added some other way is still shown clean. */
 const MEDIA_ID_SUFFIX = / \[media-[A-Za-z0-9_-]+\]/;
 
 /** Display name with extension; the on-disk ID is hidden. Use `relativePath` for actions. */
@@ -59,7 +61,9 @@ export function useLibrary(bridge: DesktopBridge, refreshToken = 0): LibraryStat
     let mounted = true;
     setLoading(true);
     setFailed(false);
-    void bridge.listLibrary().then((items) => {
+    // Playlists and resume positions follow files renamed to clean names first.
+    const renamed = bridge.libraryRenames?.().then(applyRenames, () => undefined) ?? Promise.resolve();
+    void renamed.then(() => bridge.listLibrary()).then((items) => {
       if (!mounted) return;
       setEntries(items);
       setLoading(false);
@@ -70,6 +74,20 @@ export function useLibrary(bridge: DesktopBridge, refreshToken = 0): LibraryStat
     });
     return () => { mounted = false; };
   }, [bridge, refreshToken, retryToken]);
+
+  // New covers for videos that had none arrive later: reload quietly.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let active = true;
+    void bridge.subscribeArtwork?.(() => setRetryToken((value) => value + 1)).then((stop) => {
+      if (active) unlisten = stop;
+      else stop();
+    }).catch(() => undefined);
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, [bridge]);
 
   return { entries, loading, failed, retry: () => setRetryToken((value) => value + 1) };
 }

@@ -313,12 +313,16 @@ export function PlaylistSheet({ mode, songs, playlist, preselected = [], onCance
 }
 
 /** Per-song "Add to Playlist" button with a small menu of playlists. */
-export function AddToPlaylist({ song, playlists, onAdded, onNew }: {
+export function AddToPlaylist({ song, playlists, onAdded, onNew, onPlayNext, onAddToQueue }: {
   song: LibraryEntry;
   playlists: Playlist[];
   onAdded: (playlist: Playlist) => void;
   onNew: (path: string) => void;
+  /** With these, the button opens a song menu: queue actions, then playlists. */
+  onPlayNext?: (song: LibraryEntry) => void;
+  onAddToQueue?: (song: LibraryEntry) => void;
 }) {
+  const queueActions = Boolean(onPlayNext || onAddToQueue);
   const [anchor, setAnchor] = useState<DOMRect | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -368,16 +372,27 @@ export function AddToPlaylist({ song, playlists, onAdded, onNew }: {
         ref={buttonRef}
         type="button"
         className={`row-action ${anchor ? "is-open" : ""}`}
-        aria-label={`Add ${title} to a playlist`}
-        title="Add to Playlist"
+        aria-label={queueActions ? `More options for ${title}` : `Add ${title} to a playlist`}
+        title={queueActions ? "More" : "Add to Playlist"}
         aria-haspopup="menu"
         aria-expanded={Boolean(anchor)}
         onClick={(event) => setAnchor(anchor ? null : event.currentTarget.getBoundingClientRect())}
       >
-        <Icon name="addToPlaylist" />
+        <Icon name={queueActions ? "more" : "addToPlaylist"} />
       </button>
       {anchor ? createPortal(
-        <div ref={menuRef} className="menu" role="menu" aria-label="Add to Playlist" style={style}>
+        <div ref={menuRef} className="menu" role="menu" aria-label={queueActions ? `Options for ${title}` : "Add to Playlist"} style={style}>
+          {onPlayNext ? (
+            <button type="button" role="menuitem" className="menu-item" onClick={() => { close(); onPlayNext(song); }}>
+              <Icon name="next" /><span>Play Next</span>
+            </button>
+          ) : null}
+          {onAddToQueue ? (
+            <button type="button" role="menuitem" className="menu-item" onClick={() => { close(); onAddToQueue(song); }}>
+              <Icon name="queue" /><span>Add to Queue</span>
+            </button>
+          ) : null}
+          {queueActions ? <span className="menu-sep" role="separator" /> : null}
           <span className="menu-label">Add to Playlist</span>
           {playlists.map((playlist) => {
             const added = playlist.paths.includes(song.relativePath);

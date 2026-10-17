@@ -105,6 +105,8 @@ pub enum Reason {
     FloatOutput,
     Bluetooth,
     SoftwareVolume,
+    /// Loudness levelling changed this song's level.
+    VolumeLevelling,
 }
 
 impl Reason {
@@ -120,6 +122,7 @@ impl Reason {
             Self::FloatOutput => "float_output",
             Self::Bluetooth => "bluetooth_output",
             Self::SoftwareVolume => "software_volume",
+            Self::VolumeLevelling => "volume_levelling",
         }
     }
 }

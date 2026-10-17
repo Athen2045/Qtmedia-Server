@@ -14,11 +14,33 @@ use super::format::{pack_float, pack_int, Negotiated, OutputMode, PcmFormat};
 
 /// Input frames per resampler chunk.
 const RESAMPLE_CHUNK: usize = 1024;
+/// Where the soft limiter starts bending peaks (−1 dBFS).
+const LIMIT_KNEE: f32 = 0.891;
+/// Headroom for Bluetooth: the headset's lossy codec rebuilds peaks above
+/// the samples it was given, so leave it 1 dB (−1 dBTP, as streaming masters do).
+pub const BLUETOOTH_HEADROOM: f32 = 0.891;
+
+/// Bends samples above −1 dBFS smoothly towards full scale instead of
+/// cutting them flat at ±1.0 (harsh clipping). Transparent below the knee;
+/// continuous with slope 1 at the knee; never exceeds ±1.0.
+pub fn soft_limit(sample: f32) -> f32 {
+    let magnitude = sample.abs();
+    if magnitude <= LIMIT_KNEE {
+        return sample;
+    }
+    let room = 1.0 - LIMIT_KNEE;
+    let limited = LIMIT_KNEE + room * ((magnitude - LIMIT_KNEE) / room).tanh();
+    limited.copysign(sample)
+}
 
 pub struct Converter {
     source_channels: usize,
     output: PcmFormat,
     gain: f32,
+    /// Extra gain before the limiter (Bluetooth headroom); 1.0 otherwise.
+    headroom: f32,
+    /// This track's loudness-levelling gain (fixed per track; 1.0 = off).
+    level: f32,
     copy_bits: bool,
     resampler: Option<Resampling>,
     floats: Vec<f32>,
@@ -40,6 +62,8 @@ impl Converter {
             source_channels: usize::from(source.channels),
             output,
             gain: negotiated.gain,
+            headroom: 1.0,
+            level: 1.0,
             copy_bits: negotiated.mode == OutputMode::Exclusive
                 && !output.float
                 && resampler.is_none()
@@ -60,11 +84,24 @@ impl Converter {
         self.gain = gain;
     }
 
+    /// Loudness levelling for this track, applied with the volume. Set once
+    /// when the track opens, so a gapless next track keeps its own level.
+    pub fn set_level(&mut self, level: f32) {
+        self.level = level;
+    }
+
+    /// Bluetooth outputs get 1 dB of headroom ahead of the headset's codec.
+    /// (Bluetooth is never bit-perfect, so this never touches a bit-perfect path.)
+    pub fn set_bluetooth(&mut self, bluetooth: bool) {
+        self.headroom = if bluetooth { BLUETOOTH_HEADROOM } else { 1.0 };
+    }
+
     /// Appends the device bytes for `block` to `out`. With resampling, output
     /// lags the input by up to one chunk until `finish`.
     pub fn convert(&mut self, block: &Block, out: &mut Vec<u8>) {
         match block {
-            Block::Int(samples) if self.copy_bits && self.gain >= 1.0 => {
+            // Only an exact unity path may copy bits (a boost must be applied).
+            Block::Int(samples) if self.copy_bits && self.gain == 1.0 && self.level == 1.0 => {
                 pack_int(samples, &self.output, out)
             }
             Block::Int(samples) => {
@@ -118,24 +155,78 @@ impl Converter {
             samples,
             self.source_channels,
             usize::from(self.output.channels),
-            self.gain,
+            self.gain * self.level * self.headroom,
             &mut mapped,
         );
+        // Lossy decodes and resampling overshoot full scale: limit softly
+        // rather than clip (the bit-perfect copy never comes through here).
+        for sample in &mut mapped {
+            *sample = soft_limit(*sample);
+        }
         pack_float(&mapped, &self.output, out);
         self.mapped = mapped;
     }
 }
 
+/// −3 dB: how much of the centre and surround channels goes into each side.
+const FOLD: f32 = std::f32::consts::FRAC_1_SQRT_2;
+
+/// Left/right weights per input channel for a stereo downmix, in the FLAC /
+/// WAVE channel order for that count (FLAC fixes the order by count). Centre
+/// and surrounds fold in at −3 dB, LFE is left out (ITU-R BS.775 / Dolby
+/// Lo/Ro), and each side is scaled so the sum can never pass full scale.
+pub fn stereo_downmix(from: usize) -> Option<Vec<(f32, f32)>> {
+    const L: (f32, f32) = (1.0, 0.0);
+    const R: (f32, f32) = (0.0, 1.0);
+    const C: (f32, f32) = (FOLD, FOLD);
+    const LFE: (f32, f32) = (0.0, 0.0);
+    const SL: (f32, f32) = (FOLD, 0.0);
+    const SR: (f32, f32) = (0.0, FOLD);
+    let layout: Vec<(f32, f32)> = match from {
+        3 => vec![L, R, C],
+        4 => vec![L, R, SL, SR],
+        5 => vec![L, R, C, SL, SR],
+        6 => vec![L, R, C, LFE, SL, SR],
+        // 6.1: FL FR FC LFE BC SL SR (the back centre feeds both sides).
+        7 => vec![L, R, C, LFE, (FOLD * FOLD, FOLD * FOLD), SL, SR],
+        // 7.1: FL FR FC LFE BL BR SL SR.
+        8 => vec![L, R, C, LFE, SL, SR, SL, SR],
+        _ => return None,
+    };
+    let left: f32 = layout.iter().map(|weights| weights.0).sum();
+    let right: f32 = layout.iter().map(|weights| weights.1).sum();
+    let scale = 1.0 / left.max(right).max(1.0);
+    Some(
+        layout
+            .into_iter()
+            .map(|(l, r)| (l * scale, r * scale))
+            .collect(),
+    )
+}
+
 /// Maps interleaved frames from `from` to `to` channels and applies `gain`.
-/// Mono feeds the first two outputs; stereo to mono averages; otherwise the
-/// shared channels are copied and extra outputs stay silent.
+/// Mono feeds the first two outputs; stereo to mono averages; surround to
+/// stereo is downmixed (centre and surrounds kept, see `stereo_downmix`);
+/// otherwise the shared channels are copied and extra outputs stay silent.
 pub fn map_channels(input: &[f32], from: usize, to: usize, gain: f32, out: &mut Vec<f32>) {
     if from == 0 || to == 0 {
         return;
     }
     out.reserve(input.len() / from * to);
+    let downmix = (to == 2 && from > 2)
+        .then(|| stereo_downmix(from))
+        .flatten();
     for frame in input.chunks_exact(from) {
-        if from == to {
+        if let Some(weights) = &downmix {
+            let (left, right) = frame
+                .iter()
+                .zip(weights)
+                .fold((0.0, 0.0), |(l, r), (sample, (wl, wr))| {
+                    (l + sample * wl, r + sample * wr)
+                });
+            out.push(left * gain);
+            out.push(right * gain);
+        } else if from == to {
             out.extend(frame.iter().map(|s| s * gain));
         } else if to == 1 {
             out.push(frame.iter().sum::<f32>() / from as f32 * gain);

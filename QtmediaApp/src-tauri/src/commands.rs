@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 
 use crate::paths::{resolve_artwork_entry, resolve_library_entry};
@@ -70,6 +70,11 @@ impl AppState {
     /// The library root currently in use (it changes when Settings switches it).
     pub fn library_root(&self) -> Result<PathBuf, StableError> {
         self.snapshot().map(|(_, root)| root)
+    }
+
+    /// Where file renames are logged (`names.rs`), beside the preferences.
+    pub fn renames_path(&self) -> PathBuf {
+        self.preference_path.with_file_name("renames.json")
     }
 
     fn sidecar(&self) -> Result<Arc<SidecarManager>, StableError> {
@@ -224,13 +229,137 @@ pub async fn list_library(
             .request_with_recovery(&app, "library_list", json!({}))
             .await?,
     )?;
-    serde_json::from_value(
+    let mut entries: Vec<LibraryEntry> = serde_json::from_value(
         response
             .get("entries")
             .cloned()
             .unwrap_or_else(|| json!([])),
     )
-    .map_err(|_| StableError::MalformedOutput)
+    .map_err(|_| StableError::MalformedOutput)?;
+    // The engine's scan has no durations; measure (once, cached) here.
+    let (Some(cache), Ok(root)) = (
+        app.try_state::<Arc<crate::durations::DurationCache>>()
+            .map(|cache| Arc::clone(&cache)),
+        state.library_root(),
+    ) else {
+        return Ok(entries);
+    };
+    let ffprobe = app
+        .try_state::<Arc<crate::preparer::Preparer>>()
+        .map(|preparer| preparer.ffprobe().to_path_buf())
+        .filter(|path| path.is_file());
+    let items: Vec<crate::durations::Item> = entries
+        .iter()
+        .map(|entry| crate::durations::Item {
+            relative_path: entry.relative_path.clone(),
+            size_bytes: entry.size_bytes,
+            modified_at: entry.modified_at,
+        })
+        .collect();
+    let durations = tauri::async_runtime::spawn_blocking(move || {
+        cache.durations(&root, &items, |item| {
+            crate::durations::measure(&root, &item.relative_path, ffprobe.as_deref())
+        })
+    })
+    .await
+    .unwrap_or_default();
+    for (entry, seconds) in entries.iter_mut().zip(durations) {
+        if entry.duration_seconds.is_none() {
+            entry.duration_seconds = seconds;
+        }
+    }
+    make_missing_covers(&app, &state, &entries);
+    measure_missing_loudness(&app, &state, &entries);
+    Ok(entries)
+}
+
+/// Songs never measured are measured in the background (one at a time, so
+/// playback and the UI stay smooth); they play unlevelled until then.
+fn measure_missing_loudness(app: &AppHandle, state: &AppState, entries: &[LibraryEntry]) {
+    let (Some(cache), Some(ffmpeg), Ok(root)) = (
+        app.try_state::<Arc<crate::loudness::LoudnessCache>>()
+            .map(|cache| Arc::clone(&cache)),
+        app.try_state::<Arc<crate::preparer::Preparer>>()
+            .map(|preparer| preparer.ffmpeg().to_path_buf())
+            .filter(|path| path.is_file()),
+        state.library_root(),
+    ) else {
+        return;
+    };
+    let songs: Vec<PathBuf> = entries
+        .iter()
+        .filter(|entry| entry.media_type == "audio")
+        .filter_map(|entry| resolve_library_entry(&root, &entry.relative_path).ok())
+        .collect();
+    let missing: Vec<PathBuf> = cache
+        .missing(&songs)
+        .into_iter()
+        .filter(|song| cache.claim(song))
+        .collect();
+    if missing.is_empty() {
+        return;
+    }
+    std::thread::spawn(move || {
+        for song in missing {
+            let measure = crate::loudness::measure(&ffmpeg, &song);
+            cache.record(&song, measure);
+        }
+    });
+}
+
+/// Videos without a cover get one from a frame, in the background; the UI
+/// reloads the library on `library-artwork`.
+fn make_missing_covers(app: &AppHandle, state: &AppState, entries: &[LibraryEntry]) {
+    let (Some(jobs), Some(ffmpeg), Ok(root)) = (
+        app.try_state::<Arc<crate::covers::CoverJobs>>()
+            .map(|jobs| Arc::clone(&jobs)),
+        app.try_state::<Arc<crate::preparer::Preparer>>()
+            .map(|preparer| preparer.ffmpeg().to_path_buf())
+            .filter(|path| path.is_file()),
+        state.library_root(),
+    ) else {
+        return;
+    };
+    let ffprobe = app
+        .try_state::<Arc<crate::preparer::Preparer>>()
+        .map(|preparer| preparer.ffprobe().to_path_buf())
+        .filter(|path| path.is_file());
+    let missing: Vec<(String, Option<f64>)> = entries
+        .iter()
+        .filter(|entry| entry.media_type == "video" && entry.artwork_path.is_none())
+        .filter(|entry| jobs.claim(&entry.relative_path))
+        .map(|entry| (entry.relative_path.clone(), entry.duration_seconds))
+        .collect();
+    if missing.is_empty() {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let mut made = Vec::new();
+        for (relative, duration) in missing {
+            let cover =
+                crate::covers::make_cover(&root, &relative, duration, &ffmpeg, ffprobe.as_deref());
+            // "Already has one" is not a failure; only ffmpeg errors are.
+            let ok = cover.is_some() || crate::covers::has_cover_for(&root, &relative);
+            jobs.finish(&relative, ok);
+            if let Some(cover) = cover {
+                made.push(cover);
+            }
+        }
+        if !made.is_empty() {
+            let _ = app.emit("library-artwork", json!({ "covers": made }));
+        }
+    });
+}
+
+/// Library-relative renames made to clean file names in the active library,
+/// oldest first, so the webview can update playlists and resume positions.
+#[tauri::command]
+pub fn library_renames(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::names::Rename>, StableError> {
+    let root = state.library_root()?;
+    Ok(crate::names::logged_renames(&state.renames_path(), &root))
 }
 
 #[tauri::command]
@@ -283,6 +412,81 @@ pub async fn import_media(
     .await
     .map(Some)
     .map_err(|_| StableError::StorageUnavailable)
+}
+
+/// Subtitle tracks of a library video (files beside it and text streams in
+/// it), each as a `qtmedia://` WebVTT path.
+#[tauri::command]
+pub async fn read_subtitles(
+    relative_path: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<crate::subtitles::Subtitles, String> {
+    let root = state
+        .library_root()
+        .map_err(|_| "storage_unavailable".to_owned())?;
+    let cache = app
+        .try_state::<crate::subtitles::SubtitleCache>()
+        .map(|cache| cache.0.clone())
+        .ok_or_else(|| "storage_unavailable".to_owned())?;
+    let tools = app
+        .try_state::<Arc<crate::preparer::Preparer>>()
+        .map(|preparer| {
+            (
+                preparer.ffprobe().to_path_buf(),
+                preparer.ffmpeg().to_path_buf(),
+            )
+        });
+    tauri::async_runtime::spawn_blocking(move || {
+        let ffprobe = tools
+            .as_ref()
+            .map(|(probe, _)| probe.as_path())
+            .filter(|path| path.is_file());
+        let ffmpeg = tools
+            .as_ref()
+            .map(|(_, mpeg)| mpeg.as_path())
+            .filter(|path| path.is_file());
+        crate::subtitles::read_subtitles(&root, &relative_path, &cache, ffprobe, ffmpeg)
+    })
+    .await
+    .map_err(|_| "storage_unavailable".to_owned())?
+    .map_err(str::to_owned)
+}
+
+/// Picks `.srt`/`.vtt` files and copies them next to a library video.
+/// Returns how many were added (`None` when the picker was cancelled).
+#[tauri::command]
+pub async fn add_subtitles(
+    relative_path: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<usize>, String> {
+    state
+        .ensure_not_switching()
+        .map_err(|_| "storage_busy".to_owned())?;
+    let root = state
+        .library_root()
+        .map_err(|_| "storage_unavailable".to_owned())?;
+    let picked = app
+        .dialog()
+        .file()
+        .set_title("Add subtitles to this video")
+        .add_filter("Subtitles", &crate::subtitles::SUBTITLE_EXTENSIONS)
+        .blocking_pick_files();
+    let Some(picked) = picked else {
+        return Ok(None);
+    };
+    let sources: Vec<PathBuf> = picked
+        .into_iter()
+        .filter_map(|file| file.into_path().ok())
+        .collect();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::subtitles::add_files(&root, &relative_path, &sources)
+    })
+    .await
+    .map_err(|_| "storage_unavailable".to_owned())?
+    .map(Some)
+    .map_err(str::to_owned)
 }
 
 /// How a library video plays: as it is, from a prepared copy, or after
@@ -443,6 +647,10 @@ async fn switch_library(
     preference: LibraryPreference,
 ) -> Result<LibraryLocation, StableError> {
     crate::paths::prepare_library(&root)?;
+    let cache_dir = app
+        .try_state::<Arc<crate::preparer::Preparer>>()
+        .map(|preparer| preparer.cache_dir().to_path_buf());
+    crate::names::tidy_library(&root, cache_dir.as_deref(), &state.renames_path());
     let network = preference.network().clone();
     let replacement = SidecarManager::start(app.clone(), &root, &network)?;
     if replacement.request("probe", json!({})).await.is_err() {

@@ -99,6 +99,65 @@ mod track_info_and_saving {
     }
 
     #[test]
+    fn flacs_made_from_lossy_streams_say_so() {
+        // CD-quality FFmpeg FLACs, hi-res FLACs and MP3s are not flagged.
+        let dir = library_with(&[
+            ("tagged.flac", "audio/Rip16.flac"),
+            ("tagged.mp3", "audio/Song.mp3"),
+            ("sine_16_44100.flac", "audio/Rip.flac"),
+            ("sine_24_96000.flac", "audio/HiRes.flac"),
+        ]);
+        let info = |song: &str| read_track_info(dir.path(), song).unwrap();
+        for song in [
+            "audio/Rip16.flac",
+            "audio/Song.mp3",
+            "audio/Rip.flac",
+            "audio/HiRes.flac",
+        ] {
+            assert_eq!(info(song).lossy_source, None, "{song}");
+        }
+
+        let ffmpeg = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("binaries/ffmpeg-x86_64-pc-windows-msvc.exe");
+        if !ffmpeg.is_file() {
+            return;
+        }
+        let make = |name: &str, args: &[&str]| {
+            let status = std::process::Command::new(&ffmpeg)
+                .args(["-nostdin", "-v", "error", "-y", "-i"])
+                .arg(fixture("sine_16_44100.flac"))
+                .args(args)
+                .arg(dir.path().join("audio").join(name))
+                .status()
+                .unwrap();
+            assert!(status.success());
+        };
+        // A new download names its source stream.
+        make(
+            "New.flac",
+            &[
+                "-metadata",
+                "SOURCE_CODEC=opus",
+                "-metadata",
+                "SOURCE_BITRATE=160",
+            ],
+        );
+        assert_eq!(
+            info("audio/New.flac").lossy_source.as_deref(),
+            Some("Opus 160 kbps")
+        );
+        // An older download: FFmpeg's 24-bit 48 kHz FLAC with no source tag.
+        make(
+            "Old.flac",
+            &["-ar", "48000", "-sample_fmt", "s32", "-c:a", "flac"],
+        );
+        assert_eq!(
+            info("audio/Old.flac").lossy_source.as_deref(),
+            Some("unknown")
+        );
+    }
+
+    #[test]
     fn track_info_is_confined_to_library_audio() {
         let dir = library_with(&[("tagged.flac", "audio/Song.flac")]);
         assert_eq!(read_track_info(dir.path(), "video/Song.flac"), None);

@@ -54,6 +54,8 @@ pub enum OutputError {
     FormatUnsupported,
     DeviceLost,
     Unavailable,
+    /// The output is a headset's Hands-Free endpoint and it has no stereo one.
+    HandsFreeOnly,
 }
 
 impl OutputError {
@@ -64,6 +66,7 @@ impl OutputError {
             Self::FormatUnsupported => "audio_format_unsupported",
             Self::DeviceLost => "audio_device_lost",
             Self::Unavailable => "audio_unavailable",
+            Self::HandsFreeOnly => "audio_hands_free_only",
         }
     }
 }
@@ -157,6 +160,52 @@ pub fn classify_transport(instance_path: &str, adapter_name: &str) -> Transport 
     } else {
         Transport::Bluetooth
     }
+}
+
+/// Classifies an endpoint from both places Windows records a Bluetooth path:
+/// Windows' own A2DP / Hands-Free drivers make the endpoint's device path
+/// `BTHENUM\…`; offloading drivers (e.g. Intel Smart Sound) keep their own
+/// device path and record the headset in a separate Bluetooth path.
+pub fn endpoint_transport(
+    bluetooth_path: &str,
+    device_path: &str,
+    adapter_name: &str,
+) -> Transport {
+    [bluetooth_path, device_path]
+        .iter()
+        .map(|path| classify_transport(path, adapter_name))
+        .find(|transport| *transport != Transport::Wired)
+        .unwrap_or(Transport::Wired)
+}
+
+/// A render endpoint as the hands-free lockout sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Endpoint {
+    pub id: String,
+    pub transport: Transport,
+    /// Windows' container id: every endpoint of one physical headset shares it.
+    pub container: Option<String>,
+}
+
+/// The endpoint to open for `chosen`. Opening a Hands-Free endpoint for
+/// playback switches the headset into its mono call profile, so it is never
+/// used: the same headset's stereo (A2DP) endpoint plays instead. `None` when
+/// the headset has no stereo endpoint.
+pub fn avoid_hands_free(chosen: &str, endpoints: &[Endpoint]) -> Option<String> {
+    let Some(picked) = endpoints.iter().find(|endpoint| endpoint.id == chosen) else {
+        return Some(chosen.to_owned());
+    };
+    if picked.transport != Transport::BluetoothHandsFree {
+        return Some(chosen.to_owned());
+    }
+    let container = picked.container.as_deref()?;
+    endpoints
+        .iter()
+        .find(|endpoint| {
+            endpoint.transport == Transport::Bluetooth
+                && endpoint.container.as_deref() == Some(container)
+        })
+        .map(|endpoint| endpoint.id.clone())
 }
 
 /// An output endpoint for the device picker.

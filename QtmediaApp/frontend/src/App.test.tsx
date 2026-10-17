@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
@@ -7,8 +7,13 @@ import type { DesktopBridge } from "./lib/bridge";
 
 // The real overlay loads Video.js, which jsdom cannot run; App only needs to open and close it.
 vi.mock("./components/VideoOverlay", () => ({
-  default: ({ entry, onClose }: { entry: { relativePath: string }; onClose: () => void }) => (
-    <div role="dialog" aria-label="Video player">{entry.relativePath}<button type="button" onClick={onClose}>Close video</button></div>
+  default: ({ entry, onClose, navigation }: { entry: { relativePath: string }; onClose: () => void; navigation?: { previous: unknown; next: unknown; onPrevious(): void; onNext(): void } }) => (
+    <div role="dialog" aria-label="Video player">
+      {entry.relativePath}
+      <button type="button" onClick={onClose}>Close video</button>
+      {navigation ? <button type="button" disabled={!navigation.previous} onClick={navigation.onPrevious}>Previous video</button> : null}
+      {navigation ? <button type="button" disabled={!navigation.next} onClick={navigation.onNext}>Next video</button> : null}
+    </div>
   ),
 }));
 
@@ -34,6 +39,14 @@ function fakeBridge(): DesktopBridge {
 
 
 describe("application shell", () => {
+  it("moves resume positions to renamed files while Home is showing", async () => {
+    localStorage.setItem("qtmedia.resume.v1", JSON.stringify({ "video/Film [media-1].mp4": { t: 90, at: 1 } }));
+    const bridge = { ...fakeBridge(), libraryRenames: vi.fn(async () => [{ from: "video/Film [media-1].mp4", to: "video/Film.mp4" }]) };
+    render(<App bridge={bridge} />);
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("qtmedia.resume.v1")!)).toEqual({ "video/Film.mp4": { t: 90, at: 1 } }));
+    localStorage.clear();
+  });
+
   it("renders five accessible destinations with Home selected", () => {
     render(<App bridge={fakeBridge()} />);
 
@@ -157,13 +170,34 @@ describe("built-in video player", () => {
     expect(screen.queryByRole("dialog", { name: "Video player" })).not.toBeInTheDocument();
   });
 
+  it("steps through the Video page's videos in the order shown", async () => {
+    const bridge = fakeBridge();
+    const clip = (name: string, modifiedAt: number) => ({ relativePath: `video/${name}.mp4`, mediaType: "video", extension: "mp4", sizeBytes: 10, modifiedAt, durationSeconds: null, artworkPath: null });
+    // Newest first on the Video page: Third, Second, First.
+    bridge.listLibrary = vi.fn().mockResolvedValue([clip("First", 1), clip("Second", 2), clip("Third", 3)]);
+    render(<App bridge={bridge} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Video" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Play Second" }));
+    const dialog = await screen.findByRole("dialog", { name: "Video player" });
+    expect(dialog).toHaveTextContent("video/Second.mp4");
+
+    fireEvent.click(screen.getByRole("button", { name: "Next video" }));
+    expect(dialog).toHaveTextContent("video/First.mp4");
+    expect(screen.getByRole("button", { name: "Next video" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Previous video" }));
+    fireEvent.click(screen.getByRole("button", { name: "Previous video" }));
+    expect(dialog).toHaveTextContent("video/Third.mp4");
+    expect(screen.getByRole("button", { name: "Previous video" })).toBeDisabled();
+  });
+
   it("pauses native music and frees the audio device when a video opens", async () => {
     const bridge = fakeBridge();
     const audio = {
       play: vi.fn(async () => undefined), pause: vi.fn(async () => undefined), resume: vi.fn(async () => undefined),
       seek: vi.fn(async () => undefined), stop: vi.fn(async () => undefined), release: vi.fn(async () => undefined),
       setVolume: vi.fn(async () => undefined), setNext: vi.fn(async () => undefined), devices: vi.fn(async () => []),
-      getSettings: vi.fn(async () => ({ deviceId: null, mode: "shared" as const, rateMismatch: "strict" as const, exclusiveVolume: false })),
+      getSettings: vi.fn(async () => ({ deviceId: null, mode: "shared" as const, rateMismatch: "strict" as const, exclusiveVolume: false, levelling: true })),
       setSettings: vi.fn(async (value) => value), subscribe: vi.fn(async () => () => undefined),
     };
     bridge.audio = audio;

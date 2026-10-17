@@ -1,9 +1,9 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { DesktopBridge, LibraryEntry } from "../lib/bridge";
 import { dominantColor, hashColor, readable } from "../lib/coverColor";
-import { PlayerProvider, usePlayer } from "../lib/player";
+import { PlayerProvider, usePlayer, usePlayerPosition } from "../lib/player";
 import { playlistStore } from "../lib/playlists";
 import { MusicPage, VideoPage } from "./MediaPages";
 import { NowPlaying, PlayerBar } from "./Player";
@@ -47,6 +47,21 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("Video page", () => {
+  it("shows how much of each started video was watched, each video once", async () => {
+    localStorage.setItem("qtmedia.resume.v1", JSON.stringify({
+      "video/Newest Clip.mp4": { t: 1862.5, at: 5 },
+      "video/Deleted.mp4": { t: 40, at: 12 },
+    }));
+    render(<VideoPage bridge={bridgeWith(library)} onPlayVideo={vi.fn()} />);
+
+    const grid = await screen.findByRole("list", { name: "All videos" });
+    expect(within(grid).getAllByRole("button", { name: /^Play / })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Play Newest Clip" })).toHaveLength(1);
+    // Newest Clip lasts 3725 s: 1862.5 s is half way; Older Clip was never started.
+    expect(within(grid).getAllByRole("progressbar")).toHaveLength(1);
+    expect(within(grid).getByRole("progressbar", { name: "Watched 50%" })).toBeInTheDocument();
+  });
+
   it("lists only videos, newest first, and plays through the system player", async () => {
     const bridge = bridgeWith(library);
     render(<VideoPage bridge={bridge} />);
@@ -66,7 +81,10 @@ describe("Video page", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Play Older Clip" }));
 
-    expect(onPlayVideo).toHaveBeenCalledWith(expect.objectContaining({ relativePath: "video/Older Clip.mp4" }));
+    expect(onPlayVideo).toHaveBeenCalledWith(expect.objectContaining({ relativePath: "video/Older Clip.mp4" }), expect.any(Array));
+    // Next/previous follow the grid: the list is the videos in the order shown.
+    const [, list] = onPlayVideo.mock.calls[0] as [LibraryEntry, LibraryEntry[]];
+    expect(list.map((item) => item.relativePath)).toEqual([...screen.getAllByRole("button", { name: /^Play / })].map((button) => `video/${button.getAttribute("aria-label")!.slice(5)}.mp4`));
     expect(bridge.openMedia).not.toHaveBeenCalled();
     expect(screen.queryByText("Player coming soon")).not.toBeInTheDocument();
   });
@@ -75,7 +93,7 @@ describe("Video page", () => {
     const bridge = bridgeWith(new Error("unreadable"));
     render(<VideoPage bridge={bridge} />);
     fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
-    expect(bridge.listLibrary).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(bridge.listLibrary).toHaveBeenCalledTimes(2));
   });
 });
 
@@ -227,7 +245,7 @@ describe("Music page and player", () => {
     fireEvent.click(screen.getByRole("button", { name: "Music" }));
 
     // Add another song from its row menu.
-    fireEvent.click(within(screen.getByRole("list", { name: "Songs" })).getByRole("button", { name: "Add Song A to a playlist" }));
+    fireEvent.click(within(screen.getByRole("list", { name: "Songs" })).getByRole("button", { name: "More options for Song A" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Evening" }));
     expect(screen.getByText("Added to “Evening”")).toBeInTheDocument();
     expect(songs).toBeDefined();
@@ -281,13 +299,51 @@ describe("Music page and player", () => {
   });
 });
 
+describe("song menu queue actions", () => {
+  it("queues a song from its row menu and says so", async () => {
+    render(<MusicHarness bridge={bridgeWith(library)} />);
+    const songs = await screen.findByRole("list", { name: "Songs" });
+    fireEvent.click(within(songs).getByRole("button", { name: "Play Song B" }));
+
+    fireEvent.click(within(songs).getByRole("button", { name: "More options for Song C" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Play Next" }));
+    expect(screen.getByText("“Song C” plays next")).toBeInTheDocument();
+
+    fireEvent.click(within(songs).getByRole("button", { name: "More options for Song A" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Add to Queue" }));
+    expect(screen.getByText("Added “Song A” to the queue")).toBeInTheDocument();
+  });
+});
+
 describe("player queue rules", () => {
   let api: ReturnType<typeof usePlayer>;
+  let position = 0;
   function Probe() {
     api = usePlayer();
+    position = usePlayerPosition();
     return null;
   }
   const songs = [entry("audio/1.mp3", 3), entry("audio/2.mp3", 2), entry("audio/3.mp3", 1)];
+
+  it("hands the media keys to an open video and takes them back after", () => {
+    const handlers = new Map<string, (() => void) | null>();
+    Object.defineProperty(navigator, "mediaSession", { configurable: true, value: { metadata: null, setActionHandler: (action: string, handler: (() => void) | null) => { handlers.set(action, handler); } } });
+    vi.stubGlobal("MediaMetadata", class { constructor(public init: unknown) {} });
+    render(<PlayerProvider bridge={bridgeWith(songs)}><Probe /></PlayerProvider>);
+    act(() => api.playQueue(songs, 0));
+    act(() => api.setVideoActive(true));
+    // The video registers its own keys; music must not overwrite them.
+    const videoNext = vi.fn();
+    handlers.set("nexttrack", videoNext);
+    act(() => api.next());
+    expect(handlers.get("nexttrack")).toBe(videoNext);
+
+    act(() => api.setVideoActive(false));
+    act(() => handlers.get("nexttrack")?.());
+    expect(api.current?.relativePath).toBe("audio/3.mp3");
+    vi.unstubAllGlobals();
+    Reflect.deleteProperty(navigator, "mediaSession");
+  });
 
   it("stops at the end unless repeat all wraps, and repeat one cycles modes", () => {
     render(<PlayerProvider bridge={bridgeWith(songs)}><Probe /></PlayerProvider>);
@@ -312,7 +368,7 @@ describe("player queue rules", () => {
     // jsdom does not advance currentTime on its own; seek sets it directly.
     act(() => api.prev());
     expect(api.current?.relativePath).toBe("audio/2.mp3");
-    expect(api.position).toBe(0);
+    expect(position).toBe(0);
     act(() => api.prev());
     expect(api.current?.relativePath).toBe("audio/1.mp3");
   });

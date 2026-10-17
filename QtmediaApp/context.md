@@ -1,12 +1,407 @@
 # QtmediaApp Context Snapshot
 
-**Last reviewed:** 2026-10-11
+**Last reviewed:** 2026-10-17
 
 **Current phase:** Pro UI + music player build with a bundled Deno runtime is
 installed from a fresh NSIS installer and verified end to end on branch
 `Development`; not yet committed. Priority order agreed with the user on
 2026-10-10: (1) Deno + installer ✔, (2) app-owned adapter list ✔ (+ Eporner, DoH, proxy ✔), (3) app in CI ✔ (runs locally; needs a push), (4) yt-dlp updates + FFmpeg pin ✔,
-(5) clean file names + truthful progress, (6) video player.
+(5) clean file names + truthful progress ✔ (names clean on disk since
+2026-10-17), (6) video player ✔ (2026-10-10). Next steps in this area need a
+new decision from the user.
+
+## 2026-10-18 Video settings icon redrawn as a cog
+
+The bar's Settings icon (a circle with eight short strokes) read as a
+sun/brightness control. `gear` in `components/Icon.tsx` is now an 8-tooth
+cog outline with a centre hole, checked at 20, 34 and 96px. Vitest and tsc
+passed. Nothing committed.
+
+## 2026-10-18 Simpler video controls: one bar, one settings menu, same size in full screen
+
+User asked to declutter the video player (stable volume, subtitles,
+autoplay and start over had piled up as chips) and to stop the controls
+growing in full screen. Mockups in `design/2026-10-18-video-controls/`
+were approved with: keep ±10 s in the bar, drop picture-in-picture, keep
+Speed in the settings menu. Nothing committed.
+- **Cause of the big full-screen controls:** Video.js's packaged skin raises
+  its scale unit up to 1.75x in full screen on displays 1920px and wider
+  (documented behaviour). The packaged skin also can't take extra items.
+- **Now:** `VideoOverlay` uses `VideoPlayer` + `Container` with our own
+  `components/VideoControls.tsx` built from Video.js parts (PlayButton,
+  SeekButton, MuteButton + VolumeSlider, Time, TimeSlider with preview,
+  FullscreenButton, Controls, plus the skin's Hotkey and Gesture set: Space/K,
+  M, F, C, arrows, J/L, 0-9, < >, click to play, double-click sides to skip
+  and centre for full screen). `skin.css` is no longer imported. All sizes
+  are fixed px in `app.css` ("Video player controls" section): bar 880x52,
+  20px icons, 12px text in a window and in full screen (measured both).
+- **Bar:** Previous · −10 · Play · +10 · Next (navigation only when there
+  is a list) | volume (slider slides out on hover) · time · seek | CC (only
+  when the video has subtitles; underline when on) · Settings · Full screen.
+- **Settings menu:** Stable volume and Autoplay next switches
+  (menuitemcheckbox), Subtitles page (Off, tracks, "Add subtitle file…",
+  the picture-subtitles note), Speed page (0.5 to 2x). Esc steps back or
+  closes the menu without closing the player; the controls stay visible
+  while it is open.
+- **Title row:** Close and title only. "Resumed at … · Start over" and
+  "Subtitles added." are a small note above the bar that fades with the
+  controls; the resume note also goes after 6 s.
+- **Tests:** `VideoOverlay.test.tsx` stands in for the Video.js parts and
+  opens the menu for Stable volume/Autoplay/subtitles; new tests for CC and
+  the Subtitles page, Speed and Esc, and the resume note fading. Vitest 186
+  passed; tsc clean. Headless Brave check of the real Video.js parts: bar
+  880x52 in both modes, menu pages, Esc behaviour, no page errors.
+  Captures in `artifacts/2026-10-18-video-controls/`.
+- **Next:** try it with real videos with subtitles in the desktop app.
+- **Blockers:** none.
+
+## 2026-10-17 Responsive scaling across window sizes and snap layouts
+
+User asked to improve scaling when the window is resized or snapped.
+Checked every section (Home, Video, Music, Files, Settings, Music playing,
+Now Playing, video player) at 680x460, 720x520, 960x540, 1920x1080 and
+2560x1440 in headless Brave. Nothing committed.
+- **Before:** the minimum window (960x640) blocked Windows quarter snaps;
+  at narrow widths the Files toolbar ran under the window buttons; Music
+  covers grew huge in small windows; at large sizes covers, Now Playing art
+  and lyrics stayed small.
+- **Changes:** `tauri.conf.json` minimum is now 680x460. `app.css` gets a
+  "Fluid scaling" section at the end: toolbars are size containers, so the
+  song/video count hides first, then "New Playlist" and "Open Folder" turn
+  icon-only (labels are `.btn-label` spans; buttons keep aria-label and a
+  tooltip) and segmented filters tighten; search fields shrink to 112px.
+  Grids scale (`cover-grid` tiles clamp(120px, 11vw, 220px), 112px in short
+  windows; `video-grid` clamp(200px, 17vw, 360px)). Home search widens to
+  820px. Now Playing scales cover (150 to 520px from viewport height and
+  width), title, artist, lyrics (19 to 42px), progress width and spacing.
+- **Not done:** no global zoom; at 2560x1440 with 100% Windows scaling the
+  chrome stays at its normal pixel size (Windows display scaling covers
+  that). CSS `zoom` was avoided because it can skew pointer maths (drag to
+  reorder, Video.js).
+- **Verification:** Vitest 183 passed; tsc clean; build OK;
+  `cargo test --test capabilities` passed; no element overflowed sideways
+  at any size. Contact sheets in `artifacts/2026-10-17-responsive/`.
+- **Next:** try Windows snap layouts (halves and quarters) in the desktop
+  app; the new minimum applies after restarting `desktop:dev`.
+- **Blockers:** none.
+
+## 2026-10-17 Surround downmix, lossy-source label, loudness levelling
+
+- **Downmix (`convert.rs`):** `stereo_downmix` for 3–8 channels in FLAC/WAVE
+  order: centre and surrounds at −3 dB, LFE dropped (ITU-R BS.775 / Dolby
+  Lo/Ro), each side normalised so full-scale input never passes full
+  scale. `map_channels` uses it for surround → stereo (it used to keep
+  only FL/FR, dropping vocals). No surround file in the library; unit
+  tested.
+- **Lossy source:** engine (`Qtmedia/.../download.py`, `song_tags.py`)
+  records the fetched stream's `acodec`/`abr` from the progress hook and
+  writes `SOURCE_CODEC`/`SOURCE_BITRATE` into FLACs made from lossy
+  codecs (opus, aac, vorbis, mp3, ac3, eac3). `lyrics.rs` `TrackInfo`
+  gains `lossy_source`: "Opus 160 kbps" from those tags, or "unknown"
+  for FFmpeg-written (`ENCODER=Lavf…`) 24-bit 44.1/48 kHz FLACs (every
+  older download; 16-bit and ≥88.2 kHz FLACs are taken as lossless).
+  `LossySourceChip` ("Lossy source", tooltip explains) in the player bar
+  and Now Playing. Live: Skyfall shows it. Engine rebuilt (PyInstaller).
+- **Levelling:** `src-tauri/src/loudness.rs` (new): ffmpeg `ebur128`
+  integrated loudness + true peak, cached per file
+  (`<app local data>/loudness.json`), measured one at a time in the
+  background from `list_library`; `level_gain` targets −14 LUFS (YouTube/
+  Spotify) and caps boosts at −1 dBTP; ≤ −70 LUFS (silence/too short) →
+  unchanged. Engine: `Leveler` (path → gain) passed to `AudioEngine::spawn`
+  / `ManualEngine::with_leveler`; each `Track` keeps its level, applied in
+  its own `Converter` (`set_level`) so gapless joins switch exactly;
+  never in strict exclusive (no software volume) or with `levelling`
+  off; levelled exclusive output reports `volume_levelling`. Bit-copy
+  path now requires gain and level exactly 1.0 (a boost was ignored
+  before). `AudioPreference.levelling` (default on, older files on);
+  Settings → Audio "Volume levelling" switch. Live: all 21 songs measured
+  in ~30 s; they are −11.4 to −5.5 LUFS with true peaks above 0 dBTP, so
+  levelling turns them down 2.6–8.5 dB. (−16 LUFS was tried first: 4.6–
+  10.5 dB quieter, too quiet.)
+- **Tests:** Rust audio_output +1 (downmix), lyrics +1 (lossy source,
+  real ffmpeg), loudness 4, audio_engine +2 (levelled scale, strict/off
+  stay bit-perfect), all passing; Qtmedia pytest 204 (+ known Firefox
+  test), ruff clean; Vitest 183; fmt, `tsc -b`, `git diff --check` clean.
+  `examples/audio_probe.rs` updated for the new `spawn` argument.
+
+## 2026-10-17 Bluetooth audio: HFP lockout, headroom/limiter, MMCSS, lyrics delay
+
+User asked for five Bluetooth items. Findings and changes:
+1. **WASAPI resampling:** already bypassed — shared mode opens in the
+   device mix format with `autoconvert: false` and Qtmedia resamples
+   (rubato FFT). The Bluetooth link rate is set by the headset/codec; no
+   app can change it. Live on the AirBass: FLAC 48 kHz/24 → Shared 48 kHz
+   (no resampling at all).
+2. **Hands-Free lockout (new):** `output/mod.rs` `Endpoint` +
+   `avoid_hands_free`; `device.rs` reads `PKEY_Device_ContainerId`,
+   `find_device` swaps a Hands-Free endpoint (explicit or Windows default)
+   for the same headset's A2DP endpoint, else `OutputError::HandsFreeOnly`
+   (`audio_hands_free_only`, not `audio_unavailable`, so no webview
+   fallback). `list_devices` hides Hands-Free endpoints. Live: setting
+   the device to `Headset (AirBass…)` ({4583f3a5…}) played on "Headphones
+   (AirBass Headphone)"; setting restored.
+3. **Latency:** video A/V sync is Chromium's (it paces frames on the
+   device clock Windows reports); the music engine has no picture. Lyrics
+   could run ahead by the headset's own delay, which no API reports: new
+   `lib/bluetoothDelay.ts` (`qtmedia.audio.bluetoothDelayMs`, 0–500, default
+   0) and Settings → Audio "Lyrics delay on Bluetooth" (Bluetooth outputs
+   only); `PositionedLyrics` subtracts it on Bluetooth.
+4. **Headroom (new):** `convert.rs` `soft_limit` (transparent ≤ −1 dBFS,
+   tanh knee to full scale, never above ±1.0) on every float path;
+   `Converter::set_bluetooth` adds 1 dB headroom (`BLUETOOTH_HEADROOM`) for
+   Bluetooth. The bit-perfect integer copy never passes through it (test).
+5. **Threads:** decode/render/control threads + lock-free ring existed; new
+   `boost_render_thread` registers the render thread with MMCSS "Pro
+   Audio" (`windows` feature `Win32_System_Threading`, same version). Live:
+   render thread at priority 24 (TimeCritical) while playing.
+- **Tests:** Rust audio_output +4 (limiter, overs/headroom, bit-perfect
+  untouched, HFP redirect); Vitest 181 (+2 delay). All Rust tests pass;
+  fmt, `tsc -b`, `git diff --check` clean. Installer rebuilt and
+  installed; volume/player state restored after the live checks.
+
+## 2026-10-17 Subtitles, generated video covers, Continue watching removed
+
+- **Continue watching row removed (user: "videos got duplicated"):** no
+  files were duplicated on disk; the row repeated started videos above the
+  grid. Each video now shows once; started ones keep the progress bar.
+- **Subtitles** (spec `docs/superpowers/specs/2026-10-17-video-subtitles-design.md`,
+  git-ignored): `src-tauri/src/subtitles.rs` (new) finds `video/<stem>.srt|vtt`
+  and `<stem>.<label>.srt|vtt` (2–3 letter label = language), and text
+  streams inside the video via ffprobe (subrip/ass/ssa/mov_text/webvtt);
+  picture streams (PGS/DVD) are counted as `unsupported`. Titles that are
+  web addresses or shared by every stream (release-site ads) are dropped.
+  Everything becomes WebVTT (SRT `,`→`.`, `<font>` removed, UTF-16/BOM
+  handled, 4 MB cap) in `<app local data>/subtitle-cache/<16 hex>.vtt`;
+  embedded streams are extracted in one ffmpeg pass. Served as
+  `qtmedia://localhost/subtitles/<16 hex>.vtt` (`media.rs`
+  `subtitle_name`/`serve_subtitle`, strict names; CSP unchanged).
+  Commands `read_subtitles`, `add_subtitles` (file picker, copies as
+  `<stem>.<picked name>.<ext>`). Deleting a video also trashes its
+  subtitle files unless another video shares the stem (`removal.rs`).
+  `Preparer::ffmpeg()` added.
+- **Player:** `<track kind="subtitles">` per track inside Video.js
+  `<Video>`; Video.js's CC button (appears only with tracks), settings →
+  captions submenu and `C` key do on/off and choice. `lib/subtitles.ts`:
+  language names (ISO 639-2 → BCP 47 + `Intl.DisplayNames`), numbered
+  repeats ("English (2)"), `pickTrack`, choice in `qtmedia.video.subtitles`
+  (same language, else label, else first). The overlay applies the choice
+  per video, records picks on `textTracks` `change`, and turns off a second
+  track the webview enabled by itself. Header: "Add subtitles"/"Subtitles"
+  button and a note when only picture subtitles exist; `::cue` styled.
+- **Generated covers:** `src-tauri/src/covers.rs` (new). `list_library`
+  starts a background job for videos without a cover: ffmpeg at a
+  pseudo-random but fixed point (15–60 % by path hash; start if that fails),
+  `thumbnail=48` picks a representative frame, HDR (PQ/HLG via ffprobe) is
+  tone-mapped (zscale + hable), saved as `artwork/<stem>.jpg` (never
+  replacing one). `CoverJobs` stops duplicate/failed retries per session;
+  `library-artwork` event → `bridge.subscribeArtwork` → `useLibrary`
+  reloads.
+- **Live with the user's `Lanterns…HEVC-PSA.mkv` (4K HDR10+/DV, 53 min):**
+  cover generated and tone-mapped (snowy street at night); 36 embedded
+  SubRip tracks extracted in 1.05 s (34 ms cached), ad titles dropped,
+  labels English, English (2), Bulgarian…; remembered English applied;
+  807 cues, "No witnesses." shown at 10:58; CC off/on saved; remux to MP4
+  for playback. Not exercised live: the Add subtitles file picker (native
+  dialog), Video.js captions submenu selection (feeds from the same list).
+- **Tests:** Vitest 179; Rust subtitles 10, covers 5 (real ffmpeg for
+  embedded extraction and frame grab), all passing; fmt, `tsc -b`,
+  `git diff --check` clean. Subtitle choice left as English on.
+
+## 2026-10-17 Player quality pass (durations, renders, memory, volume, seek) + features
+
+User asked for items 1–5 of the quality review, then the missing features.
+- **1 Durations (`src-tauri/src/durations.rs`, new):** `list_library` fills
+  `durationSeconds` (the engine scan never did): symphonia for songs, the
+  bundled ffprobe for videos and header-less MP3s, 4 workers, cached
+  (including "unknown") by `root|path|size|mtime` in `<app local
+  data>/durations.json`, pruned per root. `Preparer::ffprobe()` added.
+  Live: 32/32 measured, first listing 718 ms, then 20 ms.
+- **2 Renders (`lib/player.tsx`):** position left `PlayerState`; a
+  per-provider store + `usePlayerPosition()` (useSyncExternalStore). Only
+  `SeekBar` and `PositionedLyrics` (in `Player.tsx`) re-render on ticks.
+- **3 Memory:** `qtmedia.player.v1` keeps volume, mute, shuffle, repeat,
+  queue/ordered (≤5000), index and position (every 5 s, on state change,
+  on `pagehide`). Restores paused and cued (`loadedPathRef`); Play loads at
+  the saved position; seek while cued only moves the start. On mount the
+  restored queue is checked against the library (following the rename log)
+  and gone songs dropped. Live: Skyfall restored at 0:30 / 4:46, resumed
+  there.
+- **4 Volume:** `volumeGain(v) = v³` for both backends (50 % ≈ −18 dB).
+- **5 Seek:** `Slider live={false}` holds the drag locally and seeks once
+  on pointer up; keys seek at once.
+- **Video:** `resume.ts` gains `list()` and a `qtmedia-resume` window event;
+  Video page shows "Continue watching" (≤12, newest first; plays within
+  that row) and a progress bar on every card. Overlay: Autoplay toggle
+  (`qtmedia.video.autoplay`, on by default; only with neighbours), "Up
+  next in 5" card with Play now/Cancel (Esc cancels before closing);
+  video volume/mute remembered (`qtmedia.video.volume`). Live: row and
+  bars correct, card counted down and advanced, Cancel worked.
+- **Music:** `playNext` / `addToQueue` (move duplicates, keep the current
+  song; start playing when idle); the song row button is now "More
+  options for …" (⋯ icon) with Play Next / Add to Queue above the playlist
+  items. `usePlayerShortcuts`: Space, Ctrl+←/→, Ctrl+↑/↓ app-wide, off
+  while typing or with a video open; Now Playing's own Space handler
+  removed.
+- **Tests:** Vitest 171 (persistence, render isolation, seek on release,
+  cubic gain, queue insertion, shortcuts, continue watching, autoplay,
+  video volume, song menu); Rust durations 3 new, all passing; fmt,
+  `tsc -b` clean.
+- **Note:** saved positions for videos not opened by the agent changed
+  between runs (someone was using the app); explains the earlier "page
+  reset" and missing key. Test state removed; the app was force-closed
+  several times and reopened at the end.
+- **Still open (bigger, need design):** subtitles, audio-track choice,
+  music loudness normalisation, streaming preparation of MKV/AVI.
+
+## 2026-10-17 Video next/previous; media keys follow the open video
+
+User asked for next/previous in the video player and the music player, and
+whether a doubly linked list is used. Music already had Previous/Next (player
+bar and Now Playing; `lib/player.tsx` queue = array + index, prev restarts
+past 3 s) — unchanged. Neither player uses a linked list (answered in chat:
+array + index fits shuffle, drag reorder and immutable React state).
+- **Video (`components/VideoOverlay.tsx`):** optional `navigation`
+  (`previous`, `next`, `onPrevious`, `onNext`). Prev/Next buttons flank the
+  ±10 s buttons (`.video-skip__side`, `.video-skip__nav` in `app.css`),
+  titled "Previous: <title> (Shift+P)", disabled at the ends, hidden for one
+  video. Shift+N / Shift+P. Saves the position before moving. The overlay
+  is no longer keyed by path: per-video state resets on path change, the old
+  video is paused and unloaded (`removeAttribute("src")` + `load()`), and
+  `switchingRef` ignores its late pause/ended until the next metadata loads.
+  The player stays mounted while the next source is checked, so full screen
+  is kept; `usePlayableSource` resets to `checking` per path.
+- **App/pages:** `onPlayVideo(entry, list?)`; Video grid passes its items,
+  Files its visible videos, Home just the entry. `App` holds
+  `{list, index}` and builds `navigation`.
+- **Media keys:** `PlayerValue.setVideoActive`; while a video is open the
+  music player stops registering media-session handlers and the overlay
+  registers play/pause/next/previous (title as metadata); on close it
+  clears them and music registers again. Before this, ⏭ during a video
+  started the next song.
+- **Tests:** Vitest 154 (overlay 5 new, App list stepping, Video page list
+  order, media-key handover); `tsc -b` clean.
+- **Installed-app check:** Video page → Previous/Next titles and disabled
+  ends correct; Next and Shift+P switch videos and save the position
+  (Kianna 40 s saved, resumed at 40); a video with no saved position starts
+  at 0 after a far-along one; full screen kept across Next and Previous;
+  media-session title follows the video and clears on close; Files opens
+  with Files' order (Milf wars: prev "I love big tits pmv", next "Bridgette
+  b pmv"). Positions created by testing were removed; Nonstop and Best pmv
+  moved ~2 s forward from test playback.
+- **Open observation:** once during testing the page reset to Home mid
+  script and the renamed Interstellar resume key was missing afterwards.
+  Neither reproduced (full-screen, Next chain through Interstellar all kept
+  it; key restored at 88→90.8 s). The one plausible code path (old video's
+  late `ended` clearing the new path) is now guarded and tested.
+- **Files:** `frontend/src/{App.tsx,App.test.tsx,app.css}`,
+  `components/{VideoOverlay,VideoOverlay.test,MediaPages,MediaPages.test,FilesPage}.tsx`,
+  `lib/player.tsx`; spec `docs/superpowers/specs/2026-10-10-video-player-design.md`
+  (note: `docs/` is git-ignored, so specs stay local).
+
+## 2026-10-17 Clean file names on disk
+
+User asked for saved names without the ` [media-<id>]` tag, keeping covers,
+resume and playlists working. Spec:
+`docs/superpowers/specs/2026-10-17-clean-file-names-design.md`.
+- **Engine (`Qtmedia/.../desktop_service/download.py`):** `clean_stem(title)`
+  (sanitized, 120 chars, Windows device names get `_`). Temp files keep
+  `safe_stem` = `Title [media-id]` (job isolation and cleanup); the final
+  move takes `_free_stem`: free across `audio/`, `video/`, `artwork/` (any
+  extension, case-insensitive), else ` (2)`… under a process lock. The cover
+  follows the media stem.
+- **Rust (`src-tauri/src/names.rs`, new):** `tidy_library` renames every
+  tagged group (media + `.lrc` + cover) that contains real audio/video to the
+  untagged stem (numbered on clash; orphan lyrics/covers left alone), rolls a
+  group back if any part fails, never overwrites, carries the prepared
+  playback copy to its new `cache_name`. Renames are logged per library root
+  in `<app data>/Qtmedia/renames.json` after each group. Runs in `setup`
+  before the engine starts and in `switch_library`. New command
+  `library_renames` (`commands.rs`, registered in `lib.rs`).
+- **UI:** `lib/renames.ts` (`renamer` follows chains, `applyRenames`);
+  `playlistStore.remap` (dedupes, keeps `updatedAt`) and
+  `remapResumePositions` (newer wins). Applied by `AppShell` on mount and on
+  `libraryRevision`, and by `useLibrary` before listing. Display stripping
+  of the tag in `lib/library.ts` stays for files added other ways.
+- **Live (installed build, user's library):** first launch renamed 83 files
+  (11 videos, 21 songs with lyrics and covers, 30 covers); no tagged media
+  left; 30/32 entries have covers (the 2 without never had one); 5 orphan
+  `.lrc` files untouched. Resume keys remapped while on Home (7 of 7 for
+  existing videos; 7 others belong to deleted videos). Interstellar opened
+  "Resumed at 1:26" from `video/Interstellar … (HDR - 4K - 5.1).mp4`;
+  Skyfall's lyrics and cover resolve. The user had no playlists, so playlist
+  remap is verified by tests only. A new download was not run live (would add
+  a file to the user's library); covered by engine tests. Native audio
+  playback of a renamed song not exercised (same path resolution as lyrics).
+- **Verified:** Vitest 147 passed, `tsc -b` clean; Rust all passed (names 7
+  new), `cargo fmt --check` clean, build warning-free; Qtmedia pytest 200
+  passed + the known machine-dependent Firefox cookie test; sidecar 47/48
+  (known stdout-guard with the CLI venv; needs `PYTHONPATH=src;../../Qtmedia/src`);
+  ruff clean; `git diff --check` clean. Pytest needs
+  `-p no:cacheprovider --basetemp <scratch>` in the sandbox. Engine rebuilt
+  with PyInstaller directly; `pnpm desktop:build --bundles nsis` (108 MB)
+  installed silently.
+- **Files:** `Qtmedia/src/qtmedia/desktop_service/download.py`,
+  `Qtmedia/tests/test_desktop_{service,flac}.py`, `src-tauri/src/{names,commands,lib}.rs`,
+  `src-tauri/tests/names.rs`, `frontend/src/App.tsx`, `App.test.tsx`,
+  `lib/{renames,renames.test,playlists,resume,bridge,library,library.test}.ts`,
+  `components/MediaPages.test.tsx`, `setup.md`, the spec.
+- **Next:** commit/push still awaiting the user's decision (this and the
+  2026-10-13 audio work are both uncommitted).
+
+## 2026-10-13 Exclusive mode gives the device back on pause
+
+User report: play music, pause, then a YouTube video in a browser has no
+sound until the app is closed and the tab refreshed. Cause: in Exclusive
+mode the engine kept the device for 30 s after pause; Windows silences every
+other app meanwhile, and a browser that failed to open audio does not retry
+until the tab reloads.
+- **Engine (`src/audio/engine.rs`):** `pause()` calls `release()` at once
+  when the open stream is exclusive (shared mode keeps the 30 s release; it
+  never blocks other apps). `seek()` while paused and released only moves
+  `released_at`, so the device is not retaken; resume reopens it at that
+  position (about 0.1 s before sound).
+- **Tests (`tests/audio_engine.rs`):** new
+  `an_exclusive_pause_gives_the_device_back_at_once` (release on pause, seek
+  stays released, resume reopens at the new position); the 30 s test now runs
+  in shared mode (`a_paused_shared_engine_releases_the_device_after_30_seconds`).
+- **Verified:** `cargo test --locked` all pass (engine 19), `cargo fmt
+  --check` clean (clippy not installed), `git diff --check` clean. Rebuilt
+  `pnpm desktop:build --bundles nsis` and installed silently. In the
+  installed app over DevTools: with the output temporarily set to the Realtek
+  speakers (exclusive, 24-bit 48 kHz) pause emits `deviceReleased`
+  immediately, a seek while paused opens nothing, resume reopens; the user's
+  audio settings were restored afterwards. On the AirBass headphones every
+  track falls back to shared (`exclusive_bits_unsupported`), and a second
+  Chromium audio client kept running both while playing and after pause.
+- **Real second client on the speakers (follow-up, AirBass disconnected):**
+  a scratch WASAPI probe opening the default device in shared mode (as a
+  browser does) got `0x8889000A` (device in use) while Qtmedia played
+  exclusive, **OK after pause**, and in-use again after resume.
+- **Bluetooth detection fixed:** the AirBass reported `transport: "wired"`.
+  Windows' own A2DP driver records `BTHENUM\{0000110B-…}` in the endpoint's
+  device path (`{b3f8fa53-…},2`); only offloading drivers (Intel Smart Sound)
+  fill the Bluetooth path (`…,39`) that was read. `output/mod.rs` adds
+  `endpoint_transport(bluetooth_path, device_path, adapter)` (Bluetooth if
+  either path or the adapter says so); `output/device.rs` reads both keys.
+  Test `bluetooth_is_found_in_either_endpoint_path` in
+  `tests/audio_output.rs`. Speakers still report wired. Not yet checked live
+  with the AirBass connected (it was disconnected); the classifier was
+  checked against its registry values (endpoint `{5aef2813-…}`).
+- **Docs:** engine plan's exclusive-ownership note updated.
+- **Live AirBass check (reconnected):** `audio_devices` lists
+  "Headphones (AirBass Headphone)" as `bluetooth` (speakers `wired`);
+  playback signal path carries `transport: "bluetooth"` (shared,
+  `exclusive_format_unsupported`). Player chip: "Bluetooth · not lossless".
+- **Tooltip fix:** `frontend/src/lib/signalPath.ts` `signalReason` now gives
+  the Bluetooth sentence for any Bluetooth device (it only did for
+  `shared_mode`, so this case said "refused exclusive mode for this
+  format"); test added in `nativePlayer.test.tsx`. Vitest 141 passed, tsc
+  clean. Rebuilt and reinstalled; the Now Playing tooltip reads "Bluetooth
+  re-compresses audio, so it is never lossless."
+- **Next:** commit/push still awaiting the user's decision.
+- **Files (follow-up):** `src-tauri/src/audio/output/{mod,device}.rs`,
+  `src-tauri/tests/audio_output.rs`. Rebuilt and reinstalled again; all Rust
+  tests pass, fmt and `git diff --check` clean.
 
 ## 2026-10-11 Browser cookies (Firefox) for SpankBang's anti-bot check
 

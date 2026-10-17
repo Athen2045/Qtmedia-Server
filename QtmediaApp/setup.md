@@ -368,7 +368,11 @@ Download rules:
 - Audio is encoded as MP3 at 192 kbps. Video is merged to playable MP4.
 - The sidecar reports provider/network extraction failures as
   `provider_unavailable`; this is distinct from an unavailable local engine.
-- Output names are sanitized and collision-safe.
+- Output names are sanitized and collision-safe: `Title.ext`, or
+  `Title (2).ext` when any audio, video or cover already uses that stem.
+  Older `Title [media-<id>].ext` files are renamed at startup and the renames
+  are logged for playlists and resume
+  (`docs/superpowers/specs/2026-10-17-clean-file-names-design.md`).
 - All outputs resolve below the fixed library root.
 - Partial output and FFmpeg intermediates stay under `temp/` until final
   validation.

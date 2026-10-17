@@ -4,7 +4,8 @@ import type { DesktopBridge, LibraryEntry, SignalPath } from "../lib/bridge";
 import { readable, rgb, useCoverColor } from "../lib/coverColor";
 import { formatDuration, mediaTitle } from "../lib/library";
 import { useLyrics, useTrackInfo } from "../lib/lyrics";
-import { usePlayer, type PlayerValue } from "../lib/player";
+import { useBluetoothDelay } from "../lib/bluetoothDelay";
+import { usePlayer, usePlayerPosition, type PlayerValue } from "../lib/player";
 import { describeOutput, describeSource, signalBadge, signalReason } from "../lib/signalPath";
 import { useDragReorder } from "../lib/useDragReorder";
 import { Artwork } from "./Artwork";
@@ -25,6 +26,7 @@ const playbackErrors: Record<string, string> = {
   audio_decode_failed: "This file is damaged or can't be decoded",
   audio_io: "This file could not be read",
   audio_unavailable: "Audio output is unavailable",
+  audio_hands_free_only: "This headset is only available in call mode; reconnect it or pick another output",
 };
 
 function playbackError(code: string | null) {
@@ -36,6 +38,15 @@ function SignalChip({ player, fallback }: { player: PlayerValue; fallback: strin
   if (!player.signal) return <>{fallback}</>;
   const badge = signalBadge(player.signal);
   return <span className={`signal-chip signal-chip--${badge.tone}`} title={`${describeSource(player.signal.source)} → ${describeOutput(player.signal.output)}`}>{badge.label}</span>;
+}
+
+/** "Lossy source": the FLAC holds a decoded lossy stream (YouTube Opus/AAC). */
+export function LossySourceChip({ source }: { source: string | null | undefined }) {
+  if (!source) return null;
+  const detail = source === "unknown"
+    ? "Made by FFmpeg from what was most likely a lossy stream (YouTube Opus or AAC). FLAC keeps that sound exactly but cannot add back what the stream left out."
+    : `Downloaded as ${source} and saved as FLAC. FLAC keeps that sound exactly but cannot add back what the stream left out.`;
+  return <span className="signal-chip signal-chip--warn" title={detail}>Lossy source</span>;
 }
 
 /** Now Playing: just the quality chip; the path and reason are in its tooltip. */
@@ -54,9 +65,23 @@ function SignalDetails({ signal }: { signal: SignalPath | null }) {
   );
 }
 
-/** Seek/volume slider: native range input styled as a thin track with a fill. */
-function Slider({ label, value, max, onChange, className = "", disabled = false, title }: { label: string; value: number; max: number; onChange: (value: number) => void; className?: string; disabled?: boolean; title?: string }) {
-  const percent = max > 0 ? Math.min(100, (value / max) * 100) : 0;
+/** Seek/volume slider: native range input styled as a thin track with a fill.
+ * With `live={false}` a pointer drag only moves the thumb and reports once,
+ * on release (one seek instead of one per pixel); keys report each step. */
+function Slider({ label, value, max, onChange, className = "", disabled = false, title, live = true }: { label: string; value: number; max: number; onChange: (value: number) => void; className?: string; disabled?: boolean; title?: string; live?: boolean }) {
+  const [dragValue, setDragValue] = useState<number | null>(null);
+  const draggingRef = useRef(false);
+  const dragValueRef = useRef<number | null>(null);
+  const shown = dragValue ?? value;
+  const percent = max > 0 ? Math.min(100, (shown / max) * 100) : 0;
+  const finish = () => {
+    if (!draggingRef.current) return;
+    draggingRef.current = false;
+    const committed = dragValueRef.current;
+    dragValueRef.current = null;
+    setDragValue(null);
+    if (committed !== null) onChange(committed);
+  };
   return (
     <input
       type="range"
@@ -65,13 +90,47 @@ function Slider({ label, value, max, onChange, className = "", disabled = false,
       min={0}
       max={max || 1}
       step={max > 1 ? 1 : 0.01}
-      value={Math.min(value, max || 1)}
+      value={Math.min(shown, max || 1)}
       disabled={disabled || !max}
       title={title}
       style={{ "--fill": `${percent}%` } as React.CSSProperties}
-      onChange={(event) => onChange(Number(event.target.value))}
+      onPointerDown={() => { if (!live) draggingRef.current = true; }}
+      onPointerUp={finish}
+      onPointerCancel={finish}
+      onLostPointerCapture={finish}
+      onBlur={finish}
+      onChange={(event) => {
+        const next = Number(event.target.value);
+        if (draggingRef.current) {
+          dragValueRef.current = next;
+          setDragValue(next);
+        } else {
+          onChange(next);
+        }
+      }}
     />
   );
+}
+
+/** Elapsed time, seek bar and length. Re-renders with the position on its own. */
+function SeekBar({ player, className, max }: { player: PlayerValue; className?: string; max: number }) {
+  const position = usePlayerPosition();
+  return (
+    <>
+      <span>{time(position)}</span>
+      <Slider label="Seek" className={className} value={position} max={max} onChange={player.seek} live={false} />
+      <span>{time(player.duration)}</span>
+    </>
+  );
+}
+
+/** Lyrics follow what is heard: on Bluetooth, the headset's own delay is
+ * taken off the engine's clock (Settings → Audio → Lyrics delay). */
+function PositionedLyrics({ bluetooth, ...props }: Omit<React.ComponentProps<typeof LyricsPanel>, "position"> & { bluetooth: boolean }) {
+  const position = usePlayerPosition();
+  const delayMs = useBluetoothDelay();
+  const heard = bluetooth ? Math.max(0, position - delayMs / 1000) : position;
+  return <LyricsPanel {...props} position={heard} />;
 }
 
 function Transport({ player, large = false }: { player: PlayerValue; large?: boolean }) {
@@ -93,6 +152,7 @@ export function PlayerBar({ bridge }: { bridge: DesktopBridge }) {
   const current = player.current;
   const title = current ? mediaTitle(current) : "Nothing playing";
   const volumeLocked = Boolean(player.signal?.volumeLocked);
+  const info = useTrackInfo(bridge, current);
   return (
     <footer className="player-bar" aria-label="Music player">
       <div className="player-now">
@@ -103,15 +163,13 @@ export function PlayerBar({ bridge }: { bridge: DesktopBridge }) {
         ) : <span className="player-art artwork artwork--empty"><Icon name="music" /></span>}
         <div className="player-now__copy">
           <strong title={title}>{title}</strong>
-          <span>{player.failed ? playbackError(player.error) : current ? <SignalChip player={player} fallback="From your library" /> : "Pick a song to start"}</span>
+          <span>{player.failed ? playbackError(player.error) : current ? <><SignalChip player={player} fallback="From your library" /> <LossySourceChip source={info?.lossySource} /></> : "Pick a song to start"}</span>
         </div>
       </div>
       <div className="player-center">
         <Transport player={player} />
         <div className="player-time">
-          <span>{time(player.position)}</span>
-          <Slider label="Seek" value={player.position} max={current ? player.duration : 0} onChange={player.seek} />
-          <span>{time(player.duration)}</span>
+          <SeekBar player={player} max={current ? player.duration : 0} />
         </div>
       </div>
       <div className="player-right">
@@ -256,15 +314,12 @@ export function NowPlaying({ bridge }: { bridge: DesktopBridge }) {
     if (!player.nowPlayingOpen) return;
     closeRef.current?.focus();
     const onKey = (event: KeyboardEvent) => {
+      // Space is handled by the app-wide music shortcuts.
       if (event.key === "Escape") player.closeNowPlaying();
-      if (event.key === " " && !(event.target instanceof HTMLButtonElement || event.target instanceof HTMLInputElement)) {
-        event.preventDefault();
-        player.toggle();
-      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [player.nowPlayingOpen, player.closeNowPlaying, player.toggle]);
+  }, [player.nowPlayingOpen, player.closeNowPlaying]);
 
   if (!player.nowPlayingOpen || !current) return null;
   const accent = readable(tint, 150);
@@ -315,10 +370,11 @@ export function NowPlaying({ bridge }: { bridge: DesktopBridge }) {
           {artist ? <p className="np-artist">{artist}</p> : <p>From your library</p>}
           {album ? <p className="np-album">{album}</p> : null}
           <SignalDetails signal={player.signal} />
+          {info?.lossySource ? <div className="np-signal"><LossySourceChip source={info.lossySource} /></div> : null}
         </div>
         {view === "lyrics" ? (
           <section className="np-side" aria-label="Lyrics view">
-            <LyricsPanel state={lyrics} position={player.position} playing={player.playing} onSeek={player.seek} trackKey={current.relativePath} />
+            <PositionedLyrics bluetooth={player.signal?.device?.transport === "bluetooth" || player.signal?.reason === "bluetooth_output"} state={lyrics} playing={player.playing} onSeek={player.seek} trackKey={current.relativePath} />
           </section>
         ) : (
           <UpNext bridge={bridge} player={player} />
@@ -327,9 +383,7 @@ export function NowPlaying({ bridge }: { bridge: DesktopBridge }) {
 
       <div className="np-controls">
         <div className="np-progress">
-          <span>{time(player.position)}</span>
-          <Slider label="Seek" className="slider--np" value={player.position} max={player.duration} onChange={player.seek} />
-          <span>{time(player.duration)}</span>
+          <SeekBar player={player} className="slider--np" max={player.duration} />
         </div>
         <Transport player={player} large />
       </div>

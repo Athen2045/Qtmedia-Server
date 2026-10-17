@@ -31,6 +31,8 @@ export function signalBadge(signal: SignalPath): SignalBadge {
       return { label: "Exclusive · resampled", tone: "info" };
     case "software_volume":
       return { label: "Exclusive · volume active", tone: "info" };
+    case "volume_levelling":
+      return { label: "Exclusive · levelled", tone: "info" };
     case "lossy_source":
       return { label: "Exclusive · lossy file", tone: "info" };
     default:
@@ -49,6 +51,7 @@ const reasons: Record<string, string> = {
   float_output: "Converted to floating point for this device.",
   bluetooth_output: "Bluetooth re-compresses audio, so it is never lossless.",
   software_volume: "Software volume is below 100 %.",
+  volume_levelling: "Volume levelling adjusts this song to the same loudness as the others.",
 };
 
 /** One sentence explaining why the path is not bit-perfect (or null). */
@@ -57,6 +60,8 @@ export function signalReason(signal: SignalPath) {
   if (signal.device?.transport === "bluetoothHandsFree") {
     return "This is the headset's call profile (mono, phone quality). Pick its \"Headphones\" output for music.";
   }
-  if (signal.device?.transport === "bluetooth" && signal.reason === "shared_mode") return reasons.bluetooth_output;
+  // Bluetooth is the limit whatever else applies (headsets often refuse
+  // exclusive formats too).
+  if (signal.device?.transport === "bluetooth") return reasons.bluetooth_output;
   return signal.reason ? reasons[signal.reason] ?? null : null;
 }

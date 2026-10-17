@@ -4,6 +4,7 @@ import type { DesktopBridge, LibraryEntry, MediaKind } from "../lib/bridge";
 import { formatAdded, formatBytes, formatDuration, mediaTitle, useLibrary } from "../lib/library";
 import { useOptionalPlayer } from "../lib/player";
 import { usePlaylists, type Playlist } from "../lib/playlists";
+import { createResumeStore, RESUME_EVENT, type SavedPosition } from "../lib/resume";
 import { Artwork } from "./Artwork";
 import { EmptyState } from "./FilesPage";
 import { Icon } from "./Icon";
@@ -51,9 +52,48 @@ function ListStates({ loading, failed, retry, empty, kind, onGoHome }: { loading
   return null;
 }
 
-export function VideoPage({ bridge, refreshToken = 0, onGoHome, onShowDownload, onPlayVideo }: { bridge: DesktopBridge; refreshToken?: number; onGoHome?: () => void; onShowDownload?: () => void; onPlayVideo?: (entry: LibraryEntry) => void }) {
+/** Saved video positions, refreshed whenever the player saves one. */
+function useSavedPositions(): SavedPosition[] {
+  const [positions, setPositions] = useState(() => createResumeStore().list());
+  useEffect(() => {
+    const refresh = () => setPositions(createResumeStore().list());
+    window.addEventListener(RESUME_EVENT, refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener(RESUME_EVENT, refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, []);
+  return positions;
+}
+
+function VideoCard({ bridge, entry, progress, onPlay }: { bridge: DesktopBridge; entry: LibraryEntry; progress: number | null; onPlay: () => void }) {
+  const title = mediaTitle(entry);
+  return (
+    <li className="video-card">
+      <button type="button" className="video-thumb" aria-label={`Play ${title}`} onClick={onPlay}>
+        <Artwork bridge={bridge} entry={entry} name={title} className="video-art" />
+        {entry.durationSeconds !== null ? <span className="video-duration">{formatDuration(entry.durationSeconds)}</span> : null}
+        <span className="play-overlay" aria-hidden="true"><span className="play-disc"><Icon name="play" /></span></span>
+        {progress !== null ? <span className="video-progress" role="progressbar" aria-label={`Watched ${Math.round(progress * 100)}%`} aria-valuenow={Math.round(progress * 100)} aria-valuemin={0} aria-valuemax={100}><i style={{ width: `${Math.max(2, progress * 100)}%` }} /></span> : null}
+      </button>
+      <div className="media-meta"><strong title={title}>{title}</strong><span>{formatAdded(entry.modifiedAt)} · {formatBytes(entry.sizeBytes)}</span></div>
+    </li>
+  );
+}
+
+export function VideoPage({ bridge, refreshToken = 0, onGoHome, onShowDownload, onPlayVideo }: { bridge: DesktopBridge; refreshToken?: number; onGoHome?: () => void; onShowDownload?: () => void; onPlayVideo?: (entry: LibraryEntry, list?: LibraryEntry[]) => void }) {
   const [sort, setSort] = useState<Sort>("recent");
   const { items, loading, failed, retry } = useMediaList(bridge, "video", refreshToken, sort);
+  const saved = useSavedPositions();
+  const progressOf = useMemo(() => {
+    const byPath = new Map(saved.map((item) => [item.relativePath, item.position]));
+    return (entry: LibraryEntry) => {
+      const position = byPath.get(entry.relativePath);
+      return position !== undefined && entry.durationSeconds ? Math.min(1, position / entry.durationSeconds) : null;
+    };
+  }, [saved]);
+  const play = (entry: LibraryEntry, list: LibraryEntry[]) => (onPlayVideo ? onPlayVideo(entry, list) : void bridge.openMedia(entry.relativePath));
   return (
     <section className="page media-page" aria-labelledby="video-title">
       <Toolbar title="Video" badge={onPlayVideo ? undefined : "Player coming soon"} onShowDownload={onShowDownload}>
@@ -64,20 +104,10 @@ export function VideoPage({ bridge, refreshToken = 0, onGoHome, onShowDownload, 
       <div className="page-body">
         <ListStates loading={loading} failed={failed} retry={retry} empty={items.length === 0} kind="video" onGoHome={onGoHome} />
         {!failed && items.length ? (
-          <ul className="video-grid">
-            {items.map((entry) => {
-              const title = mediaTitle(entry);
-              return (
-                <li key={entry.relativePath} className="video-card">
-                  <button type="button" className="video-thumb" aria-label={`Play ${title}`} onClick={() => (onPlayVideo ? onPlayVideo(entry) : void bridge.openMedia(entry.relativePath))}>
-                    <Artwork bridge={bridge} entry={entry} name={title} className="video-art" />
-                    {entry.durationSeconds !== null ? <span className="video-duration">{formatDuration(entry.durationSeconds)}</span> : null}
-                    <span className="play-overlay" aria-hidden="true"><span className="play-disc"><Icon name="play" /></span></span>
-                  </button>
-                  <div className="media-meta"><strong title={title}>{title}</strong><span>{formatAdded(entry.modifiedAt)} · {formatBytes(entry.sizeBytes)}</span></div>
-                </li>
-              );
-            })}
+          <ul className="video-grid" aria-label="All videos">
+            {items.map((entry) => (
+              <VideoCard key={entry.relativePath} bridge={bridge} entry={entry} progress={progressOf(entry)} onPlay={() => play(entry, items)} />
+            ))}
           </ul>
         ) : null}
       </div>
@@ -116,7 +146,7 @@ export function MusicPage({ bridge, refreshToken = 0, onGoHome, onShowDownload }
     <section className="page media-page music-page" aria-labelledby="music-title">
       <Toolbar title="Music" onShowDownload={onShowDownload}>
         {!openPlaylist && !loading && !failed && items.length ? <span className="toolbar-count">{items.length} {items.length === 1 ? "song" : "songs"}</span> : null}
-        {!failed && all.length ? <button type="button" className="btn btn-default" onClick={() => setSheet({ mode: "create", preselected: [] })}><Icon name="plus" />New Playlist</button> : null}
+        {!failed && all.length ? <button type="button" className="btn btn-default" aria-label="New Playlist" title="New Playlist" onClick={() => setSheet({ mode: "create", preselected: [] })}><Icon name="plus" /><span className="btn-label">New Playlist</span></button> : null}
         {openPlaylist ? null : <label className="field field--search"><span className="sr-only">Search music</span><Icon name="search" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search music" /></label>}
       </Toolbar>
       <span id="music-title" className="sr-only">Music</span>
@@ -161,7 +191,14 @@ export function MusicPage({ bridge, refreshToken = 0, onGoHome, onShowDownload }
                     <button type="button" className="song-title" aria-label={`Play ${title}`} onClick={() => play(entry)}>{title}</button>
                     <span className="song-dim">{formatAdded(entry.modifiedAt)}</span>
                     <span className="song-time">{entry.durationSeconds !== null ? formatDuration(entry.durationSeconds) : "–"}</span>
-                    <AddToPlaylist song={entry} playlists={playlists} onAdded={(playlist) => setNotice(`Added to “${playlist.name}”`)} onNew={(path) => setSheet({ mode: "create", preselected: [path] })} />
+                    <AddToPlaylist
+                      song={entry}
+                      playlists={playlists}
+                      onAdded={(playlist) => setNotice(`Added to “${playlist.name}”`)}
+                      onNew={(path) => setSheet({ mode: "create", preselected: [path] })}
+                      onPlayNext={player?.available ? (song) => { const started = !player.current; player.playNext([song]); setNotice(started ? `Playing “${mediaTitle(song)}”` : `“${mediaTitle(song)}” plays next`); } : undefined}
+                      onAddToQueue={player?.available ? (song) => { const started = !player.current; player.addToQueue([song]); setNotice(started ? `Playing “${mediaTitle(song)}”` : `Added “${mediaTitle(song)}” to the queue`); } : undefined}
+                    />
                   </div>
                 );
               })}

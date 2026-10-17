@@ -44,6 +44,9 @@ pub fn remove_entries(
             Ok(path) if remove(&path) => {
                 report.removed.push(relative.clone());
                 remove_unshared_artwork(root, &path, &mut remove);
+                if relative.starts_with("video/") {
+                    remove_unshared_subtitles(root, relative, &path, &mut remove);
+                }
             }
             _ => report.failed += 1,
         }
@@ -76,6 +79,28 @@ fn remove_unshared_artwork(root: &Path, removed: &Path, remove: &mut impl FnMut(
         if let Ok(cover) = resolve_artwork_entry(root, &format!("artwork/{stem}.{extension}")) {
             remove(&cover);
         }
+    }
+}
+
+/// Removes the subtitle files of a just-removed video unless another video
+/// with the same stem (e.g. `Film.mkv` beside `Film.mp4`) still uses them.
+fn remove_unshared_subtitles(
+    root: &Path,
+    relative: &str,
+    removed: &Path,
+    remove: &mut impl FnMut(&Path) -> bool,
+) {
+    let Some(stem) = removed.file_stem().and_then(|value| value.to_str()) else {
+        return;
+    };
+    let shared = VIDEO_EXTENSIONS
+        .iter()
+        .any(|extension| resolve_library_entry(root, &format!("video/{stem}.{extension}")).is_ok());
+    if shared {
+        return;
+    }
+    for subtitle in crate::subtitles::files_for(root, relative) {
+        remove(&subtitle);
     }
 }
 
