@@ -4,6 +4,8 @@ yt-dlp reports a track's name, artists and album for music sources (YouTube
 Music, auto-generated "Artist - Topic" channels). The desktop app writes them
 into saved MP3/FLAC files so the lyrics lookup can match on artist and title.
 Nothing else is written: no source link, description or uploader details.
+FLACs made from a lossy stream also get `SOURCE_CODEC` / `SOURCE_BITRATE`
+(e.g. "opus" / "160") so the player can say they are not truly lossless.
 """
 
 from __future__ import annotations
@@ -45,6 +47,33 @@ def song_tags(info: dict[str, object]) -> SongTags:
         if channel and channel.endswith(TOPIC_SUFFIX):
             artist = channel.removesuffix(TOPIC_SUFFIX).strip() or None
     return SongTags(title=_text(info.get("track")), artist=artist, album=_text(info.get("album")))
+
+
+# Codecs that lose information; a FLAC made from one is not truly lossless.
+LOSSY_CODECS = {"opus": "opus", "mp4a": "aac", "aac": "aac", "vorbis": "vorbis", "mp3": "mp3", "ac-3": "ac3", "ec-3": "eac3"}
+
+
+def lossy_codec(acodec: object) -> str | None:
+    """yt-dlp's `acodec` ("opus", "mp4a.40.2") as a lossy codec name, else None."""
+    if not isinstance(acodec, str):
+        return None
+    family = acodec.strip().casefold().split(".", 1)[0]
+    return LOSSY_CODECS.get(family)
+
+
+def write_source_tags(path: Path, acodec: object, abr: object) -> bool:
+    """Marks a FLAC made from a lossy stream; returns whether it did."""
+    codec = lossy_codec(acodec)
+    if codec is None or path.suffix.casefold() != ".flac":
+        return False
+    from mutagen.flac import FLAC  # pylint: disable=import-outside-toplevel
+
+    audio = FLAC(path)
+    audio["SOURCE_CODEC"] = [codec]
+    if isinstance(abr, (int, float)) and abr > 0:
+        audio["SOURCE_BITRATE"] = [str(round(abr))]
+    audio.save(str(path))
+    return True
 
 
 def write_song_tags(path: Path, tags: SongTags, fallback_title: str) -> bool:

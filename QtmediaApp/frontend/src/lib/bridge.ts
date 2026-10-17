@@ -1,6 +1,8 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 
 import type { DownloadStage } from "./progress";
+import type { Rename } from "./renames";
+import type { Subtitles } from "./subtitles";
 import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
 
@@ -46,6 +48,9 @@ export type TrackInfo = {
   artist: string | null;
   album: string | null;
   durationSeconds: number | null;
+  /** A FLAC made from a lossy stream: "Opus 160 kbps", or "unknown" when only
+   * FFmpeg's signature shows it (older downloads). Absent for true lossless. */
+  lossySource?: string | null;
 };
 
 export type YtdlpChannel = "stable" | "nightly";
@@ -108,6 +113,8 @@ export type AudioSettings = {
   mode: AudioOutputMode;
   rateMismatch: AudioRateMismatch;
   exclusiveVolume: boolean;
+  /** Play songs at one loudness (needs software volume; strict exclusive stays exact). */
+  levelling: boolean;
 };
 
 export type AudioTransport = "wired" | "bluetooth" | "bluetoothHandsFree";
@@ -160,6 +167,10 @@ export type DesktopBridge = {
   startDownload(mediaId: string, formatKey: string): Promise<void>;
   cancelDownload(jobId: string): Promise<void>;
   listLibrary(): Promise<LibraryEntry[]>;
+  /** Files renamed to clean names in the active library, oldest first. */
+  libraryRenames?(): Promise<Rename[]>;
+  /** Fires when covers were made for videos that had none (reload the library). */
+  subscribeArtwork?(listener: () => void): Promise<() => void>;
   openMedia(relativePath: string): Promise<void>;
   openLibrary(): Promise<void>;
   readArtwork(relativePath: string): Promise<string | null>;
@@ -179,6 +190,10 @@ export type DesktopBridge = {
   /** MKV/MOV/AVI and other videos the webview can't play as they are get a prepared copy. */
   preparePlayback?(relativePath: string, support?: { dolby: boolean }): Promise<PlaybackPlan>;
   cancelPlayback?(id: string): Promise<void>;
+  /** Subtitle tracks of a library video (files beside it, text streams in it). */
+  readSubtitles?(relativePath: string): Promise<Subtitles>;
+  /** Picks .srt/.vtt files and copies them next to the video; null if cancelled. */
+  addSubtitles?(relativePath: string): Promise<number | null>;
   subscribePlayback?(listener: (event: PlaybackEvent) => void): Promise<() => void>;
   /** Makes the whole app window full screen (the video player uses it). */
   setFullscreen?(fullscreen: boolean): Promise<void>;
@@ -213,6 +228,8 @@ export const desktopBridge: DesktopBridge = {
     invoke("start_download", { mediaId, formatKey }),
   cancelDownload: (jobId) => invoke("cancel_download", { jobId }),
   listLibrary: () => invoke<LibraryEntry[]>("list_library"),
+  libraryRenames: () => invoke<Rename[]>("library_renames"),
+  subscribeArtwork: async (listener) => listen("library-artwork", () => listener()),
   openMedia: (relativePath) => invoke("open_media", { relativePath }),
   openLibrary: () => invoke("open_library"),
   readArtwork: (relativePath) => invoke<string>("read_artwork", { relativePath }),
@@ -229,6 +246,8 @@ export const desktopBridge: DesktopBridge = {
   importMedia: () => invoke<{ imported: string[]; skipped: number } | null>("import_media"),
   preparePlayback: (relativePath, support) => invoke<PlaybackPlan>("prepare_playback", { relativePath, dolby: support?.dolby ?? false }),
   cancelPlayback: (id) => invoke("cancel_playback", { id }),
+  readSubtitles: (relativePath) => invoke<Subtitles>("read_subtitles", { relativePath }),
+  addSubtitles: (relativePath) => invoke<number | null>("add_subtitles", { relativePath }),
   subscribePlayback: async (listener) => listen<PlaybackEvent>("playback-prepare", ({ payload }) => listener(payload)),
   closeWindow: () => invoke("window_close"),
   readLyrics: (relativePath) => invoke<string | null>("read_lyrics", { relativePath }),

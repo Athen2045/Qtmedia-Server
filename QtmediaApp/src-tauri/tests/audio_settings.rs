@@ -90,6 +90,7 @@ fn audio_preference_defaults_to_shared_on_the_default_device() {
             mode: AudioMode::Shared,
             rate_mismatch: RateMismatchPreference::Strict,
             exclusive_volume: false,
+            levelling: true,
         }
     );
     // A preferences file written before the audio engine loads as defaults.
@@ -123,6 +124,7 @@ fn audio_preference_round_trips_and_keeps_library_and_network() {
         mode: AudioMode::Exclusive,
         rate_mismatch: RateMismatchPreference::Resample,
         exclusive_volume: true,
+        levelling: false,
     };
     save_audio(&path, audio.clone()).unwrap();
     assert_eq!(load_audio(&path), audio);

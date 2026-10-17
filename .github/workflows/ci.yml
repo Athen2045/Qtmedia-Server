@@ -39,7 +39,8 @@ jobs:
           python -m pip install -e "./Qtmedia[dev]"
 
       - name: Run Ruff
-        run: ruff check Qtmedia
+        # Each project uses its own [tool.ruff] settings from its pyproject.
+        run: ruff check Qtmedia QtmediaApp/sidecar
 
   test:
     name: Test (Python ${{ matrix.python-version }})
@@ -147,12 +148,28 @@ jobs:
         with:
           workspaces: QtmediaApp/src-tauri
 
-      - name: Stand in for bundled tools
-        # tauri-build requires the externalBin files to exist; tests never run
-        # them, and the real binaries are untracked release-only builds.
+      - name: Cache pinned FFmpeg
+        id: ffmpeg-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            QtmediaApp/src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc.exe
+            QtmediaApp/src-tauri/binaries/ffprobe-x86_64-pc-windows-msvc.exe
+          key: ffmpeg-${{ runner.os }}-${{ hashFiles('QtmediaApp/scripts/prepare-ffmpeg.ps1') }}
+
+      - name: Prepare pinned FFmpeg
+        # Rust tests (covers, loudness, lyrics) run the bundled ffmpeg. The
+        # script downloads the pinned build and checks its SHA-256 and version.
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: ./QtmediaApp/scripts/prepare-ffmpeg.ps1
+
+      - name: Stand in for the other bundled tools
+        # tauri-build requires every externalBin file to exist. Tests never run
+        # these two, and the real ones are release-only builds.
         run: |
           mkdir -p QtmediaApp/src-tauri/binaries
-          for tool in qtmedia-engine ffmpeg ffprobe deno; do
+          for tool in qtmedia-engine deno; do
             touch "QtmediaApp/src-tauri/binaries/$tool-x86_64-pc-windows-msvc.exe"
           done
 

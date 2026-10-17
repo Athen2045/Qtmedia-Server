@@ -100,6 +100,18 @@ export const playlistStore = {
       return { ...playlist, paths };
     });
   },
+  /** Points saved songs at their new paths after files are renamed (no timestamp change). */
+  remap(rename: (path: string) => string) {
+    const current = read();
+    let changed = false;
+    const next = current.map((playlist) => {
+      const paths = [...new Set(playlist.paths.map(rename))];
+      if (paths.length === playlist.paths.length && paths.every((path, index) => path === playlist.paths[index])) return playlist;
+      changed = true;
+      return { ...playlist, paths };
+    });
+    if (changed) write(next);
+  },
   /** Tests only. */
   reset() {
     snapshot = null;

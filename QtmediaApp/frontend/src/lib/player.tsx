@@ -1,8 +1,11 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import { createHtmlBackend, createNativeBackend, type AudioBackend, type BackendListener } from "./audioBackend";
 import type { DesktopBridge, LibraryEntry, SignalPath } from "./bridge";
-import { mediaTitle } from "./library";
+import { currentLibrary, mediaTitle } from "./library";
+import { renamer } from "./renames";
+import { readSavedPlayer, writeSavedPlayer } from "./savedPlayer";
+export { PLAYER_KEY } from "./savedPlayer";
 
 export type RepeatMode = "off" | "all" | "one";
 
@@ -12,7 +15,6 @@ type PlayerState = {
   ordered: LibraryEntry[];
   index: number;
   playing: boolean;
-  position: number;
   duration: number;
   volume: number;
   muted: boolean;
@@ -33,6 +35,10 @@ export type PlayerValue = PlayerState & {
   current: LibraryEntry | null;
   playQueue(entries: LibraryEntry[], startIndex: number): void;
   playAt(index: number): void;
+  /** Puts songs right after the current one (moving them if already queued). */
+  playNext(entries: LibraryEntry[]): void;
+  /** Puts songs at the end of the queue (moving them if already queued). */
+  addToQueue(entries: LibraryEntry[]): void;
   /** Moves a queue item; the playing song keeps playing wherever it lands. */
   moveInQueue(from: number, to: number): void;
   toggle(): void;
@@ -46,16 +52,62 @@ export type PlayerValue = PlayerState & {
   stop(): void;
   /** Pause and free the audio device (the video player opened). */
   releaseDevice(): void;
+  /** While a video is open it owns the media keys; music takes them back after. */
+  setVideoActive(active: boolean): void;
   openNowPlaying(): void;
   closeNowPlaying(): void;
 };
 
 const initial: PlayerState = {
-  queue: [], ordered: [], index: -1, playing: false, position: 0, duration: 0,
+  queue: [], ordered: [], index: -1, playing: false, duration: 0,
   volume: 0.8, muted: false, shuffle: false, repeat: "off", failed: false, error: null, signal: null, nowPlayingOpen: false,
 };
 
 const PlayerContext = createContext<PlayerValue | null>(null);
+
+/**
+ * The playback position changes four times a second. It lives in its own
+ * store so only the components that show it re-render, not every player
+ * consumer (the song list, Up Next, the whole bar).
+ */
+type PositionStore = { get(): number; set(seconds: number): void; subscribe(listener: () => void): () => void };
+
+function createPositionStore(initialSeconds = 0): PositionStore {
+  let seconds = initialSeconds;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => seconds,
+    set(next) {
+      if (next === seconds) return;
+      seconds = next;
+      for (const listener of listeners) listener();
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+}
+
+const PositionContext = createContext<PositionStore | null>(null);
+const noPosition = () => 0;
+const noSubscribe = () => () => undefined;
+
+/** The current playback position in seconds; re-renders only its caller. */
+export function usePlayerPosition() {
+  const store = useContext(PositionContext);
+  return useSyncExternalStore(store?.subscribe ?? noSubscribe, store?.get ?? noPosition, store?.get ?? noPosition);
+}
+
+/** Slider position → output gain. Loudness is heard on a log scale; a cubic
+ * curve (as PulseAudio uses) makes each part of the slider sound even. */
+export function volumeGain(volume: number) {
+  const clamped = Math.max(0, Math.min(1, volume));
+  return clamped ** 3;
+}
+
+/** Save the playing position at most this often; pause and page hide always save. */
+const SAVE_POSITION_MS = 5000;
 
 /** Restart the current track instead of going back when past this point. */
 const RESTART_THRESHOLD = 3;
@@ -78,10 +130,18 @@ export function followingIndex(length: number, index: number, repeat: RepeatMode
 }
 
 export function PlayerProvider({ bridge, children }: { bridge: DesktopBridge; children: React.ReactNode }) {
-  const [state, setState] = useState<PlayerState>(initial);
+  // The last session comes back paused, at the song and position it left off.
+  const [saved] = useState(readSavedPlayer);
+  const [state, setState] = useState<PlayerState>(() => {
+    const { position: _position, ...rest } = saved;
+    return { ...initial, ...Object.fromEntries(Object.entries(rest).filter(([, value]) => value !== undefined)) } as PlayerState;
+  });
+  const [positionStore] = useState(() => createPositionStore(saved.index !== undefined && saved.index >= 0 ? saved.position ?? 0 : 0));
   const [backendKind, setBackendKind] = useState<"native" | "html" | null>(null);
   const stateRef = useRef(state);
   stateRef.current = state;
+  // The song the backend holds; a restored song is only cued until Play.
+  const loadedPathRef = useRef<string | null>(null);
   const backendRef = useRef<AudioBackend | null>(null);
   // Set when the native engine reports it cannot run; the webview takes over.
   const nativeFailedRef = useRef(false);
@@ -111,19 +171,21 @@ export function PlayerProvider({ bridge, children }: { bridge: DesktopBridge; ch
         ? createNativeBackend(bridge.audio, listener)
         : createHtmlBackend(bridge, listener);
       const { volume, muted } = stateRef.current;
-      backendRef.current?.setVolume(muted ? 0 : volume);
+      backendRef.current?.setVolume(muted ? 0 : volumeGain(volume));
       setBackendKind(backendRef.current?.kind ?? null);
     }
     return backendRef.current;
   }, [bridge, listener]);
 
-  const load = useCallback((queue: LibraryEntry[], index: number, extra: Partial<PlayerState> = {}) => {
+  const load = useCallback((queue: LibraryEntry[], index: number, extra: Partial<PlayerState> = {}, startSeconds = 0) => {
     const entry = queue[index];
     const player = backend();
     if (!entry || !player) return;
-    update({ ...extra, queue, index, position: 0, duration: entry.durationSeconds ?? 0, failed: false, error: null, playing: true });
-    void player.load(entry);
-  }, [backend, update]);
+    positionStore.set(startSeconds);
+    loadedPathRef.current = entry.relativePath;
+    update({ ...extra, queue, index, duration: entry.durationSeconds ?? 0, failed: false, error: null, playing: true });
+    void player.load(entry, startSeconds);
+  }, [backend, positionStore, update]);
 
   const playQueue = useCallback((entries: LibraryEntry[], startIndex: number) => {
     if (!entries[startIndex]) return;
@@ -138,6 +200,27 @@ export function PlayerProvider({ bridge, children }: { bridge: DesktopBridge; ch
   }, [load]);
 
   const playAt = useCallback((index: number) => load(stateRef.current.queue, index), [load]);
+
+  const insert = useCallback((entries: LibraryEntry[], where: "next" | "end") => {
+    const { queue, ordered, index, shuffle } = stateRef.current;
+    const current = queue[index];
+    if (!current) {
+      // Nothing playing: the songs become the queue.
+      playQueue(entries, 0);
+      return;
+    }
+    const seen = new Set<string>([current.relativePath]);
+    const added = entries.filter((entry) => !seen.has(entry.relativePath) && seen.add(entry.relativePath));
+    if (!added.length) return;
+    const moving = new Set(added.map((entry) => entry.relativePath));
+    const rest = queue.filter((entry) => !moving.has(entry.relativePath));
+    const at = where === "next" ? rest.indexOf(current) + 1 : rest.length;
+    const nextQueue = [...rest.slice(0, at), ...added, ...rest.slice(at)];
+    const nextOrdered = shuffle ? [...ordered.filter((entry) => !moving.has(entry.relativePath)), ...added] : nextQueue;
+    update({ queue: nextQueue, ordered: nextOrdered, index: nextQueue.indexOf(current) });
+  }, [playQueue, update]);
+  const playNext = useCallback((entries: LibraryEntry[]) => insert(entries, "next"), [insert]);
+  const addToQueue = useCallback((entries: LibraryEntry[]) => insert(entries, "end"), [insert]);
 
   const moveInQueue = useCallback((from: number, to: number) => {
     const { queue, index, shuffle } = stateRef.current;
@@ -168,18 +251,25 @@ export function PlayerProvider({ bridge, children }: { bridge: DesktopBridge; ch
     const { queue, index } = stateRef.current;
     const player = backend();
     if (!queue.length || !player) return;
-    if (player.currentTime() > RESTART_THRESHOLD || index === 0) {
-      player.seek(0);
-      update({ position: 0 });
+    const cued = loadedPathRef.current !== queue[index]?.relativePath;
+    const at = cued ? positionStore.get() : player.currentTime();
+    if (at > RESTART_THRESHOLD || index === 0) {
+      if (!cued) player.seek(0);
+      positionStore.set(0);
       return;
     }
     load(queue, index - 1);
   }, [backend, load, update]);
 
   const toggle = useCallback(() => {
-    const { index, playing } = stateRef.current;
+    const { queue, index, playing } = stateRef.current;
     const player = backend();
     if (index < 0 || !player) return;
+    if (!playing && loadedPathRef.current !== queue[index]?.relativePath) {
+      // A restored song: start it where the last session left off.
+      load(queue, index, {}, positionStore.get());
+      return;
+    }
     if (playing) {
       player.pause();
       update({ playing: false });
@@ -187,23 +277,25 @@ export function PlayerProvider({ bridge, children }: { bridge: DesktopBridge; ch
       update({ playing: true, failed: false, error: null });
       void player.play();
     }
-  }, [backend, update]);
+  }, [backend, load, positionStore, update]);
 
   const seek = useCallback((seconds: number) => {
-    const clamped = Math.max(0, Math.min(seconds, stateRef.current.duration || seconds));
-    backend()?.seek(clamped);
-    update({ position: clamped });
-  }, [backend, update]);
+    const { queue, index, duration } = stateRef.current;
+    const clamped = Math.max(0, Math.min(seconds, duration || seconds));
+    // A cued song only remembers where to start.
+    if (loadedPathRef.current === queue[index]?.relativePath) backend()?.seek(clamped);
+    positionStore.set(clamped);
+  }, [backend, positionStore]);
 
   const setVolume = useCallback((volume: number) => {
     const clamped = Math.max(0, Math.min(1, volume));
-    backendRef.current?.setVolume(clamped);
+    backendRef.current?.setVolume(volumeGain(clamped));
     update({ volume: clamped, muted: false });
   }, [update]);
 
   const toggleMute = useCallback(() => {
     const muted = !stateRef.current.muted;
-    backendRef.current?.setVolume(muted ? 0 : stateRef.current.volume);
+    backendRef.current?.setVolume(muted ? 0 : volumeGain(stateRef.current.volume));
     update({ muted });
   }, [update]);
 
@@ -229,9 +321,11 @@ export function PlayerProvider({ bridge, children }: { bridge: DesktopBridge; ch
 
   const stop = useCallback(() => {
     backendRef.current?.stop();
+    loadedPathRef.current = null;
+    positionStore.set(0);
     const { volume, muted, shuffle, repeat } = stateRef.current;
     update({ ...initial, volume, muted, shuffle, repeat });
-  }, [update]);
+  }, [positionStore, update]);
 
   const releaseDevice = useCallback(() => {
     if (stateRef.current.index < 0) return;
@@ -247,7 +341,7 @@ export function PlayerProvider({ bridge, children }: { bridge: DesktopBridge; ch
   // Backend reports. The native engine moves between songs itself; the
   // webview backend asks the player for the next one.
   events.current = {
-    time: (position) => update({ position }),
+    time: (position) => positionStore.set(position),
     duration: (duration) => update({ duration }),
     playing: (playing) => update({ playing }),
     ended: () => {
@@ -266,7 +360,9 @@ export function PlayerProvider({ bridge, children }: { bridge: DesktopBridge; ch
         ? following
         : queue.findIndex((entry) => entry.relativePath === path);
       if (target < 0) return;
-      update({ index: target, position: 0, duration: duration ?? queue[target].durationSeconds ?? 0, failed: false, error: null });
+      positionStore.set(0);
+      loadedPathRef.current = queue[target].relativePath;
+      update({ index: target, duration: duration ?? queue[target].durationSeconds ?? 0, failed: false, error: null });
     },
     idle: () => update({ playing: false }),
     signal: (signal) => update({ signal }),
@@ -277,9 +373,9 @@ export function PlayerProvider({ bridge, children }: { bridge: DesktopBridge; ch
         nativeFailedRef.current = true;
         player.dispose();
         backendRef.current = null;
-        const { queue, index, position } = stateRef.current;
+        const { queue, index } = stateRef.current;
         const entry = queue[index];
-        if (entry) void backend()?.load(entry, position);
+        if (entry) void backend()?.load(entry, positionStore.get());
         return;
       }
       update({ playing: false, failed: true, error: code });
@@ -298,11 +394,63 @@ export function PlayerProvider({ bridge, children }: { bridge: DesktopBridge; ch
 
   useEffect(() => () => backendRef.current?.dispose(), []);
 
+  // Remember settings and the queue as they change, and the position every
+  // few seconds, on pause and when the window goes away.
+  useEffect(() => {
+    writeSavedPlayer(state, positionStore.get());
+  }, [state.volume, state.muted, state.shuffle, state.repeat, state.queue, state.ordered, state.index, state.playing]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    let last = 0;
+    const unsubscribe = positionStore.subscribe(() => {
+      const now = Date.now();
+      if (now - last < SAVE_POSITION_MS) return;
+      last = now;
+      writeSavedPlayer(stateRef.current, positionStore.get());
+    });
+    const flush = () => writeSavedPlayer(stateRef.current, positionStore.get());
+    window.addEventListener("pagehide", flush);
+    return () => {
+      unsubscribe();
+      window.removeEventListener("pagehide", flush);
+    };
+  }, [positionStore]);
+
+  // A restored queue may name songs that were renamed or deleted since.
+  useEffect(() => {
+    if (!saved.queue?.length) return;
+    let active = true;
+    // Shares the open page's startup load rather than scanning the library twice.
+    const listing = currentLibrary(bridge);
+    listing.catch(() => undefined); // handled below, after the renames arrive
+    void (async () => {
+      try {
+        const renames = (await bridge.libraryRenames?.().catch(() => [])) ?? [];
+        const rename = renamer(renames);
+        const library = new Map((await listing).map((entry) => [entry.relativePath, entry]));
+        if (!active || loadedPathRef.current) return;
+        const fresh = (entries: LibraryEntry[]) => entries.flatMap((entry) => library.get(rename(entry.relativePath)) ?? []);
+        const { queue, index } = stateRef.current;
+        const current = queue[index] ? library.get(rename(queue[index].relativePath)) : undefined;
+        const nextQueue = fresh(queue);
+        if (!current) {
+          positionStore.set(0);
+          update({ queue: [], ordered: [], index: -1, duration: 0 });
+          return;
+        }
+        update({ queue: nextQueue, ordered: fresh(stateRef.current.ordered), index: nextQueue.indexOf(current), duration: current.durationSeconds ?? stateRef.current.duration });
+      } catch {
+        // Unreadable library: keep the restored queue; playing reports errors.
+      }
+    })();
+    return () => { active = false; };
+  }, [bridge, saved, positionStore, update]);
+
   // Windows/macOS media keys and the system media overlay.
   const current = state.index >= 0 ? state.queue[state.index] ?? null : null;
+  const [videoActive, setVideoActive] = useState(false);
   useEffect(() => {
     const session = typeof navigator !== "undefined" ? navigator.mediaSession : undefined;
-    if (!session || typeof MediaMetadata === "undefined") return;
+    if (!session || typeof MediaMetadata === "undefined" || videoActive) return;
     session.metadata = current ? new MediaMetadata({ title: mediaTitle(current), artist: "Qtmedia" }) : null;
     const handlers: Array<[MediaSessionAction, (() => void) | null]> = [
       ["play", current ? toggle : null], ["pause", current ? toggle : null],
@@ -311,14 +459,60 @@ export function PlayerProvider({ bridge, children }: { bridge: DesktopBridge; ch
     for (const [action, handler] of handlers) {
       try { session.setActionHandler(action, handler); } catch { /* unsupported action */ }
     }
-  }, [current, next, prev, toggle]);
+  }, [current, next, prev, toggle, videoActive]);
 
   const value = useMemo<PlayerValue>(() => ({
     ...state, available, backend: backendKind, current,
-    playQueue, playAt, moveInQueue, toggle, next, prev, seek, setVolume, toggleMute, toggleShuffle, cycleRepeat, stop, releaseDevice, openNowPlaying, closeNowPlaying,
-  }), [state, available, backendKind, current, playQueue, playAt, moveInQueue, toggle, next, prev, seek, setVolume, toggleMute, toggleShuffle, cycleRepeat, stop, releaseDevice, openNowPlaying, closeNowPlaying]);
+    playQueue, playAt, playNext, addToQueue, moveInQueue, toggle, next, prev, seek, setVolume, toggleMute, toggleShuffle, cycleRepeat, stop, releaseDevice, setVideoActive, openNowPlaying, closeNowPlaying,
+  }), [state, available, backendKind, current, playQueue, playAt, playNext, addToQueue, moveInQueue, toggle, next, prev, seek, setVolume, toggleMute, toggleShuffle, cycleRepeat, stop, releaseDevice, openNowPlaying, closeNowPlaying]);
 
-  return <PlayerContext.Provider value={value}>{children}</PlayerContext.Provider>;
+  return (
+    <PositionContext.Provider value={positionStore}>
+      <PlayerContext.Provider value={value}>{children}</PlayerContext.Provider>
+    </PositionContext.Provider>
+  );
+}
+
+/** Whether a key event is aimed at something that takes typing or its own keys. */
+function isTypingTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName;
+  if (tag === "TEXTAREA" || tag === "SELECT") return true;
+  if (tag === "INPUT") return (target as HTMLInputElement).type !== "range";
+  return false;
+}
+
+/** Music keys anywhere in the app: Space play/pause, Ctrl+←/→ previous/next,
+ * Ctrl+↑/↓ volume. Off while `enabled` is false (the video player has its own). */
+export function usePlayerShortcuts(player: PlayerValue | null, enabled: boolean) {
+  const ref = useRef(player);
+  ref.current = player;
+  useEffect(() => {
+    if (!enabled) return;
+    const onKey = (event: KeyboardEvent) => {
+      const current = ref.current;
+      if (!current?.current || event.defaultPrevented || event.altKey || event.metaKey || isTypingTarget(event.target)) return;
+      const ctrl = event.ctrlKey;
+      if (event.key === " " && !ctrl && !event.shiftKey) {
+        // Space on a focused button or slider keeps its own meaning.
+        if (event.target instanceof HTMLButtonElement || (event.target instanceof HTMLInputElement)) return;
+        event.preventDefault();
+        current.toggle();
+      } else if (ctrl && event.key === "ArrowRight") {
+        event.preventDefault();
+        current.next();
+      } else if (ctrl && event.key === "ArrowLeft") {
+        event.preventDefault();
+        current.prev();
+      } else if (ctrl && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+        event.preventDefault();
+        current.setVolume(current.volume + (event.key === "ArrowUp" ? 0.05 : -0.05));
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [enabled]);
 }
 
 export function usePlayer() {

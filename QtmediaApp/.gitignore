@@ -33,3 +33,6 @@ src-tauri/icons/ios/
 src-tauri/icons/Square*Logo.png
 src-tauri/icons/StoreLogo.png
 src-tauri/icons/64x64.png
+
+# Local agent context archive (older context.md entries)
+context-archive.md

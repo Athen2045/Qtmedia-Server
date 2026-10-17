@@ -62,3 +62,33 @@ def test_scan_lists_mkv_mov_webm_m4v_and_avi_videos(tmp_path):
     assert set(entries) == {"video/Film.mkv", "video/Clip.MOV", "video/Talk.webm", "video/Show.m4v", "video/Old.avi"}
     assert entries["video/Clip.MOV"].extension == "mov"
     assert all(entry.media_type == "video" for entry in entries.values())
+
+
+def test_scan_picks_artwork_in_extension_order_and_keeps_file_details(tmp_path: Path):
+    for folder in ("audio", "video", "artwork"):
+        (tmp_path / folder).mkdir()
+    (tmp_path / "audio" / "Song.flac").write_bytes(b"fLaC-data")
+    (tmp_path / "video" / "Clip.mp4").write_bytes(b"x")
+    (tmp_path / "video" / "Bare.mp4").write_bytes(b"x")
+    (tmp_path / "artwork" / "Song.png").write_bytes(b"png")
+    (tmp_path / "artwork" / "Song.jpg").write_bytes(b"jpg")
+    (tmp_path / "artwork" / "Clip.webp").write_bytes(b"webp")
+    (tmp_path / "artwork" / "Clip.webp.txt").write_bytes(b"not art")
+
+    entries = {entry.relative_path: entry for entry in scan_library(tmp_path)}
+
+    assert entries["audio/Song.flac"].artwork_path == "artwork/Song.jpg"
+    assert entries["video/Clip.mp4"].artwork_path == "artwork/Clip.webp"
+    assert entries["video/Bare.mp4"].artwork_path is None
+    song = entries["audio/Song.flac"]
+    stat = (tmp_path / "audio" / "Song.flac").stat()
+    assert (song.size_bytes, song.modified_at) == (stat.st_size, stat.st_mtime)
+
+
+def test_scan_without_artwork_folder(tmp_path: Path):
+    (tmp_path / "audio").mkdir()
+    (tmp_path / "audio" / "Song.mp3").write_bytes(b"x")
+
+    [entry] = scan_library(tmp_path)
+
+    assert entry.artwork_path is None

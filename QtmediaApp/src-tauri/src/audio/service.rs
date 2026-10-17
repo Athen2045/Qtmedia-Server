@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 
 use super::decoder::{Codec, SourceFormat};
-use super::engine::{Command, Event, Settings};
+use super::engine::{Command, Event, Leveler, Settings};
 use super::format::{OutputMode, RateMismatch};
 use super::output::{DeviceInfo, Transport};
 use crate::paths::{resolve_library_entry, PathError};
@@ -53,6 +53,7 @@ pub fn engine_settings(preference: &AudioPreference, device: Option<String>) -> 
             RateMismatchPreference::Resample => RateMismatch::Resample,
         },
         exclusive_volume: preference.exclusive_volume,
+        levelling: preference.levelling,
     }
 }
 
@@ -153,10 +154,11 @@ pub struct AudioService {
     shared: Arc<Mutex<Shared>>,
     emit: Emit,
     root: RootFn,
+    leveler: Leveler,
 }
 
 impl AudioService {
-    pub fn new(preference: AudioPreference, emit: Emit, root: RootFn) -> Self {
+    pub fn new(preference: AudioPreference, emit: Emit, root: RootFn, leveler: Leveler) -> Self {
         Self {
             inner: Mutex::new(Inner {
                 #[cfg(windows)]
@@ -171,6 +173,7 @@ impl AudioService {
             })),
             emit,
             root,
+            leveler,
         }
     }
 
@@ -286,23 +289,30 @@ impl AudioService {
         let emit = self.emit.clone();
         let root = self.root.clone();
         let shared = self.shared.clone();
-        AudioEngine::spawn(Arc::new(WasapiPlatform), settings, volume, move |event| {
-            let device = match &event {
-                Event::SignalPath { .. } => current_device(&shared),
-                _ => None,
-            };
-            let root = root().unwrap_or_default();
-            let mut payload = event_payload(&event, &root, device.as_ref());
-            if let Event::SignalPath { negotiated, .. } = &event {
-                // Strict exclusive: the slider is disabled (use the DAC/amp).
-                let allow = shared
-                    .lock()
-                    .map(|shared| shared.preference.exclusive_volume)
-                    .unwrap_or(false);
-                payload["volumeLocked"] = json!(negotiated.mode == OutputMode::Exclusive && !allow);
-            }
-            emit(payload);
-        })
+        AudioEngine::spawn(
+            Arc::new(WasapiPlatform),
+            settings,
+            volume,
+            self.leveler.clone(),
+            move |event| {
+                let device = match &event {
+                    Event::SignalPath { .. } => current_device(&shared),
+                    _ => None,
+                };
+                let root = root().unwrap_or_default();
+                let mut payload = event_payload(&event, &root, device.as_ref());
+                if let Event::SignalPath { negotiated, .. } = &event {
+                    // Strict exclusive: the slider is disabled (use the DAC/amp).
+                    let allow = shared
+                        .lock()
+                        .map(|shared| shared.preference.exclusive_volume)
+                        .unwrap_or(false);
+                    payload["volumeLocked"] =
+                        json!(negotiated.mode == OutputMode::Exclusive && !allow);
+                }
+                emit(payload);
+            },
+        )
         .map_err(|_| "audio_unavailable")
     }
 }

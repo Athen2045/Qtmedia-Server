@@ -1,11 +1,12 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { PlayerBar, NowPlaying } from "../components/Player";
 import { SettingsPage } from "../components/SettingsPage";
 import { DesktopSessionProvider } from "./DesktopSession";
 import type { AudioEvent, AudioSettings, DesktopBridge, LibraryEntry, NativeAudio, SignalPath } from "./bridge";
-import { followingIndex, PlayerProvider, usePlayer } from "./player";
+import { followingIndex, PLAYER_KEY, PlayerProvider, usePlayer, usePlayerPosition, usePlayerShortcuts, volumeGain } from "./player";
+import { readBluetoothDelay, writeBluetoothDelay } from "./bluetoothDelay";
 import { describeOutput, describeSource, signalBadge, signalReason } from "./signalPath";
 
 const song = (name: string): LibraryEntry => ({
@@ -14,7 +15,7 @@ const song = (name: string): LibraryEntry => ({
 const songs = [song("A"), song("B"), song("C")];
 
 /** A fake engine: records commands, and lets tests emit `audio-event`s. */
-function fakeAudio(settings: AudioSettings = { deviceId: null, mode: "shared", rateMismatch: "strict", exclusiveVolume: false }) {
+function fakeAudio(settings: AudioSettings = { deviceId: null, mode: "shared", rateMismatch: "strict", exclusiveVolume: false, levelling: true }) {
   const listeners = new Set<(event: AudioEvent) => void>();
   const audio = {
     play: vi.fn(async () => undefined),
@@ -53,8 +54,10 @@ function bridgeWith(audio: NativeAudio, playable = true): DesktopBridge {
 }
 
 let api: ReturnType<typeof usePlayer>;
+let position = 0;
 function Probe() {
   api = usePlayer();
+  position = usePlayerPosition();
   return null;
 }
 
@@ -93,7 +96,7 @@ describe("native playback", () => {
     expect(audio.setNext).toHaveBeenLastCalledWith("audio/C.flac");
 
     emit({ type: "position", seconds: 42.5 });
-    expect(api.position).toBe(42.5);
+    expect(position).toBe(42.5);
     emit({ type: "state", state: "idle" });
     expect(api.playing).toBe(false);
   });
@@ -110,7 +113,8 @@ describe("native playback", () => {
     act(() => api.seek(30));
     expect(audio.seek).toHaveBeenCalledWith(30);
     act(() => api.setVolume(0.4));
-    expect(audio.setVolume).toHaveBeenLastCalledWith(0.4);
+    // A cubic loudness curve: 40 % on the slider is 0.064 gain (about -24 dB).
+    expect(audio.setVolume).toHaveBeenLastCalledWith(expect.closeTo(0.064, 5));
     act(() => api.toggleMute());
     expect(audio.setVolume).toHaveBeenLastCalledWith(0);
     act(() => api.releaseDevice());
@@ -161,6 +165,7 @@ describe("signal path display", () => {
     expect(signalBadge(bitPerfect)).toEqual({ label: "Bit-perfect", tone: "perfect" });
     expect(signalBadge(bluetooth).label).toBe("Bluetooth · not lossless");
     expect(signalReason(bluetooth)).toMatch(/never lossless/);
+    expect(signalReason({ ...bluetooth, reason: "exclusive_format_unsupported" })).toMatch(/never lossless/);
     expect(signalBadge({ ...bluetooth, device: { name: "Headset", transport: "bluetoothHandsFree" } }).tone).toBe("warn");
     expect(signalBadge({ ...bluetooth, device: null, reason: "exclusive_denied" }).label).toBe("Shared · exclusive unavailable");
     expect(signalReason(bitPerfect)).toBeNull();
@@ -204,7 +209,7 @@ describe("Settings → Audio", () => {
     expect(screen.getByText(/never lossless/)).toBeInTheDocument();
 
     fireEvent.change(screen.getByRole("combobox", { name: "Mode" }), { target: { value: "exclusive" } });
-    expect(audio.setSettings).toHaveBeenCalledWith({ deviceId: null, mode: "exclusive", rateMismatch: "strict", exclusiveVolume: false });
+    expect(audio.setSettings).toHaveBeenCalledWith({ deviceId: null, mode: "exclusive", rateMismatch: "strict", exclusiveVolume: false, levelling: true });
     expect(await screen.findByRole("combobox", { name: "If the device can't play the file's sample rate" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("switch", { name: "Allow volume control in exclusive mode" }));
     expect(audio.setSettings).toHaveBeenLastCalledWith(expect.objectContaining({ exclusiveVolume: true }));
@@ -215,5 +220,211 @@ describe("Settings → Audio", () => {
 
     emit({ type: "deviceChanged", devices: [{ id: "airbass", name: "Headphones (AirBass)", transport: "bluetooth", isDefault: true }], fallback: true });
     expect(screen.getByText(/isn't connected, so music plays on the Windows default/)).toBeInTheDocument();
+  });
+});
+
+describe("remembering the player", () => {
+  it("brings back settings, the queue and the position, paused, and plays from there", async () => {
+    const first = fakeAudio();
+    const view = render(<PlayerProvider bridge={bridgeWith(first.audio)}><Probe /></PlayerProvider>);
+    act(() => api.setVolume(0.5));
+    act(() => api.toggleShuffle());
+    act(() => api.cycleRepeat());
+    act(() => api.playQueue(songs, 1));
+    first.emit({ type: "position", seconds: 61 });
+    act(() => api.toggle());
+    view.unmount();
+
+    const second = fakeAudio();
+    render(<PlayerProvider bridge={bridgeWith(second.audio)}><Probe /></PlayerProvider>);
+
+    expect(api.volume).toBe(0.5);
+    expect(api.shuffle).toBe(true);
+    expect(api.repeat).toBe("all");
+    expect(api.current?.relativePath).toBe("audio/B.flac");
+    expect(api.playing).toBe(false);
+    expect(position).toBe(61);
+    expect(second.audio.play).not.toHaveBeenCalled();
+    // Seeking a cued song only moves where it will start.
+    act(() => api.seek(70));
+    expect(second.audio.seek).not.toHaveBeenCalled();
+    act(() => api.toggle());
+    expect(second.audio.play).toHaveBeenCalledWith("audio/B.flac", 70);
+  });
+
+  it("drops restored songs that are no longer in the library", async () => {
+    localStorage.setItem(PLAYER_KEY, JSON.stringify({ queue: [songs[0], song("Gone")], ordered: [songs[0], song("Gone")], index: 1, position: 12 }));
+    render(<PlayerProvider bridge={bridgeWith(fakeAudio().audio)}><Probe /></PlayerProvider>);
+    expect(api.current?.relativePath).toBe("audio/Gone.flac");
+    await waitFor(() => expect(api.current).toBeNull());
+    expect(position).toBe(0);
+  });
+
+  it("ignores a corrupt saved player", () => {
+    localStorage.setItem(PLAYER_KEY, "{not json");
+    render(<PlayerProvider bridge={bridgeWith(fakeAudio().audio)}><Probe /></PlayerProvider>);
+    expect(api.current).toBeNull();
+    expect(api.volume).toBe(0.8);
+  });
+
+  it("maps the slider to a cubic gain", () => {
+    expect(volumeGain(0)).toBe(0);
+    expect(volumeGain(1)).toBe(1);
+    expect(volumeGain(0.5)).toBeCloseTo(0.125);
+    expect(volumeGain(2)).toBe(1);
+  });
+});
+
+describe("player rendering", () => {
+  it("does not re-render ordinary player consumers on position ticks", () => {
+    const { audio, emit } = fakeAudio();
+    let renders = 0;
+    function Counter() {
+      usePlayer();
+      renders += 1;
+      return null;
+    }
+    render(<PlayerProvider bridge={bridgeWith(audio)}><Probe /><Counter /></PlayerProvider>);
+    act(() => api.playQueue(songs, 0));
+    const before = renders;
+    for (const seconds of [1, 1.25, 1.5, 1.75]) emit({ type: "position", seconds });
+    expect(renders).toBe(before);
+    expect(position).toBe(1.75);
+  });
+
+  it("seeks once when a drag on the seek bar ends", () => {
+    const { audio, emit } = fakeAudio();
+    render(<PlayerProvider bridge={bridgeWith(audio)}><Probe /><PlayerBar bridge={bridgeWith(audio)} /></PlayerProvider>);
+    act(() => api.playQueue(songs, 0));
+    emit({ type: "state", state: "playing" });
+    const bar = screen.getByRole("slider", { name: "Seek" });
+
+    fireEvent.pointerDown(bar);
+    fireEvent.change(bar, { target: { value: "40" } });
+    fireEvent.change(bar, { target: { value: "90" } });
+    expect(audio.seek).not.toHaveBeenCalled();
+    expect(bar).toHaveValue("90");
+    fireEvent.pointerUp(bar);
+    expect(audio.seek).toHaveBeenCalledTimes(1);
+    expect(audio.seek).toHaveBeenCalledWith(90);
+
+    // Keyboard steps seek straight away.
+    fireEvent.change(bar, { target: { value: "95" } });
+    expect(audio.seek).toHaveBeenLastCalledWith(95);
+  });
+});
+
+describe("play next and add to queue", () => {
+  const more = [song("D"), song("E")];
+
+  it("puts songs after the current one or at the end, moving duplicates", () => {
+    const { audio } = fakeAudio();
+    render(<PlayerProvider bridge={bridgeWith(audio)}><Probe /></PlayerProvider>);
+    act(() => api.playQueue(songs, 0));
+
+    act(() => api.addToQueue([more[0]]));
+    act(() => api.playNext([more[1]]));
+    expect(api.queue.map((item) => item.relativePath)).toEqual(["audio/A.flac", "audio/E.flac", "audio/B.flac", "audio/C.flac", "audio/D.flac"]);
+    // A song already queued moves; the playing song stays put.
+    act(() => api.playNext([songs[2], songs[0]]));
+    expect(api.queue.map((item) => item.relativePath)).toEqual(["audio/A.flac", "audio/C.flac", "audio/E.flac", "audio/B.flac", "audio/D.flac"]);
+    expect(api.current?.relativePath).toBe("audio/A.flac");
+    expect(audio.setNext).toHaveBeenLastCalledWith("audio/C.flac");
+  });
+
+  it("starts playing when nothing is queued", () => {
+    const { audio } = fakeAudio();
+    render(<PlayerProvider bridge={bridgeWith(audio)}><Probe /></PlayerProvider>);
+    act(() => api.addToQueue([more[0]]));
+    expect(api.current?.relativePath).toBe("audio/D.flac");
+    expect(audio.play).toHaveBeenCalledWith("audio/D.flac", 0);
+  });
+});
+
+describe("music shortcuts", () => {
+  function Shortcuts({ enabled }: { enabled: boolean }) {
+    api = usePlayer();
+    usePlayerShortcuts(api, enabled);
+    return <input aria-label="Search" />;
+  }
+
+  it("Space, Ctrl+arrows control music, but not while typing or with a video open", () => {
+    const { audio, emit } = fakeAudio();
+    const view = render(<PlayerProvider bridge={bridgeWith(audio)}><Shortcuts enabled /></PlayerProvider>);
+    act(() => api.playQueue(songs, 0));
+    emit({ type: "state", state: "playing" });
+
+    fireEvent.keyDown(document.body, { key: " " });
+    expect(audio.pause).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(document.body, { key: "ArrowRight", ctrlKey: true });
+    expect(api.current?.relativePath).toBe("audio/B.flac");
+    fireEvent.keyDown(document.body, { key: "ArrowLeft", ctrlKey: true });
+    expect(api.current?.relativePath).toBe("audio/A.flac");
+    act(() => api.setVolume(0.5));
+    fireEvent.keyDown(document.body, { key: "ArrowUp", ctrlKey: true });
+    expect(api.volume).toBeCloseTo(0.55);
+
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Search" }), { key: " " });
+    expect(audio.pause).toHaveBeenCalledTimes(1);
+
+    view.rerender(<PlayerProvider bridge={bridgeWith(audio)}><Shortcuts enabled={false} /></PlayerProvider>);
+    fireEvent.keyDown(document.body, { key: "ArrowRight", ctrlKey: true });
+    expect(api.current?.relativePath).toBe("audio/A.flac");
+  });
+});
+
+describe("Bluetooth lyrics delay", () => {
+  it("is set in Settings for a Bluetooth output and clamped", async () => {
+    const { audio } = fakeAudio();
+    const bridge = bridgeWith(audio);
+    render(<DesktopSessionProvider bridge={bridge}><PlayerProvider bridge={bridge}><SettingsPage bridge={bridge} /></PlayerProvider></DesktopSessionProvider>);
+
+    const slider = await screen.findByRole("slider", { name: "Lyrics delay on Bluetooth" });
+    fireEvent.change(slider, { target: { value: "180" } });
+    expect(readBluetoothDelay()).toBe(180);
+    expect(screen.getByText(/\(180 ms\)/)).toBeInTheDocument();
+    writeBluetoothDelay(9000);
+    expect(readBluetoothDelay()).toBe(500);
+  });
+
+  it("is not offered for wired outputs", async () => {
+    const { audio } = fakeAudio();
+    audio.devices.mockResolvedValue([{ id: "speakers", name: "Speakers (Realtek)", transport: "wired", isDefault: true }]);
+    const bridge = bridgeWith(audio);
+    render(<DesktopSessionProvider bridge={bridge}><PlayerProvider bridge={bridge}><SettingsPage bridge={bridge} /></PlayerProvider></DesktopSessionProvider>);
+    await screen.findByRole("combobox", { name: "Output device" });
+    expect(screen.queryByRole("slider", { name: "Lyrics delay on Bluetooth" })).not.toBeInTheDocument();
+  });
+});
+
+describe("lossy source chip", () => {
+  it("marks FLACs made from a lossy stream in the player bar", async () => {
+    const { audio, emit } = fakeAudio();
+    const bridge = { ...bridgeWith(audio), readTrackInfo: vi.fn(async (path: string) => ({ title: null, artist: null, album: null, durationSeconds: 200, lossySource: path.endsWith("A.flac") ? "Opus 160 kbps" : null })) };
+    render(<PlayerProvider bridge={bridge}><Probe /><PlayerBar bridge={bridge} /></PlayerProvider>);
+    act(() => api.playQueue(songs, 0));
+    emit({ type: "state", state: "playing" });
+
+    const chip = await screen.findByText("Lossy source");
+    expect(chip).toHaveAttribute("title", expect.stringContaining("Downloaded as Opus 160 kbps and saved as FLAC"));
+    act(() => api.next());
+    await waitFor(() => expect(screen.queryByText("Lossy source")).not.toBeInTheDocument());
+  });
+});
+
+describe("volume levelling", () => {
+  it("is switched in Settings and explained in the signal path", async () => {
+    const { audio } = fakeAudio();
+    const bridge = bridgeWith(audio);
+    render(<DesktopSessionProvider bridge={bridge}><PlayerProvider bridge={bridge}><SettingsPage bridge={bridge} /></PlayerProvider></DesktopSessionProvider>);
+
+    const toggle = await screen.findByRole("switch", { name: "Volume levelling" });
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(toggle);
+    await waitFor(() => expect(audio.setSettings).toHaveBeenLastCalledWith(expect.objectContaining({ levelling: false })));
+
+    const levelled = { ...bitPerfect, bitPerfect: false, reason: "volume_levelling", device: { name: "DAC", transport: "wired" as const } };
+    expect(signalBadge(levelled).label).toBe("Exclusive · levelled");
+    expect(signalReason(levelled)).toMatch(/same loudness/);
   });
 });

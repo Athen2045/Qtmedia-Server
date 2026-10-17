@@ -150,6 +150,7 @@ fn exclusive() -> Settings {
         mode: OutputMode::Exclusive,
         rate_mismatch: RateMismatch::Strict,
         exclusive_volume: false,
+        levelling: true,
     }
 }
 
@@ -438,8 +439,8 @@ fn device_loss_reports_the_error_and_stops() {
 }
 
 #[test]
-fn a_paused_engine_releases_the_device_after_30_seconds() {
-    let mut rig = Rig::new(exclusive());
+fn a_paused_shared_engine_releases_the_device_after_30_seconds() {
+    let mut rig = Rig::new(Settings::default());
     rig.play("sine_16_44100.flac");
     rig.periods(5);
     rig.send(Command::Pause);
@@ -472,6 +473,32 @@ fn release_command_frees_the_device_immediately() {
     rig.send(Command::Release);
     assert_eq!(rig.engine.state(), PlayState::Paused);
     assert!(rig.platform.last().is_closed());
+}
+
+#[test]
+fn an_exclusive_pause_gives_the_device_back_at_once() {
+    let mut rig = Rig::new(exclusive());
+    rig.play("sine_16_44100.flac");
+    rig.periods(5);
+    rig.send(Command::Pause);
+    let held = rig.position();
+    // Other apps can use the device straight away.
+    assert!(rig.platform.last().is_closed());
+    assert!(rig.events.contains(&Event::DeviceReleased));
+    assert_eq!(rig.engine.state(), PlayState::Paused);
+    assert_eq!(rig.position(), held);
+
+    // Seeking while paused does not take the device back.
+    rig.send(Command::Seek(0.125));
+    assert_eq!(rig.platform.devices().len(), 1);
+    assert_eq!(rig.position(), 0.125);
+
+    // Resume reopens it at the new position.
+    rig.send(Command::Resume);
+    assert_eq!(rig.platform.devices().len(), 2);
+    rig.engine.pump(rig.now);
+    assert!((rig.position() - 0.125).abs() < 1.0 / 44_100.0);
+    assert_eq!(rig.engine.state(), PlayState::Playing);
 }
 
 #[test]
@@ -619,4 +646,79 @@ fn seeking_does_not_announce_a_new_track() {
         .events
         .iter()
         .any(|event| matches!(event, Event::TrackStarted { .. })));
+}
+
+// --- Loudness levelling -------------------------------------------------------
+
+fn signal(events: &[Event]) -> qtmedia_app::audio::format::Negotiated {
+    events
+        .iter()
+        .find_map(|event| match event {
+            Event::SignalPath { negotiated, .. } => Some(*negotiated),
+            _ => None,
+        })
+        .unwrap()
+}
+
+fn levelled_rig(settings: Settings, gain: f32) -> Rig {
+    let mut rig = Rig::new(settings);
+    let engine = std::mem::replace(
+        &mut rig.engine,
+        ManualEngine::new(rig.platform.clone(), Settings::default(), 1.0),
+    );
+    rig.engine = engine.with_leveler(Arc::new(move |_| Some(gain)));
+    rig
+}
+
+#[test]
+fn levelling_scales_the_song_where_software_volume_is_allowed() {
+    let mut rig = levelled_rig(
+        Settings {
+            exclusive_volume: true,
+            ..exclusive()
+        },
+        0.5,
+    );
+    rig.play("sine_16_44100.flac");
+    let negotiated = signal(&rig.events);
+    assert!(!negotiated.bit_perfect);
+    assert_eq!(
+        negotiated.reason,
+        Some(qtmedia_app::audio::format::Reason::VolumeLevelling)
+    );
+    rig.until(ended);
+    let expected = raw("sine_16_44100.raw");
+    let bytes = rig.platform.last().bytes();
+    assert_ne!(&bytes[..expected.len()], expected.as_slice());
+    // About half the amplitude: compare the loudest 16-bit sample.
+    let peak = |data: &[u8]| {
+        data.chunks_exact(2)
+            .map(|pair| i16::from_le_bytes([pair[0], pair[1]]).unsigned_abs())
+            .max()
+            .unwrap()
+    };
+    let ratio = f64::from(peak(&bytes[..expected.len()])) / f64::from(peak(&expected));
+    assert!((ratio - 0.5).abs() < 0.01, "{ratio}");
+}
+
+#[test]
+fn strict_exclusive_and_levelling_off_stay_bit_perfect() {
+    for settings in [
+        exclusive(),
+        Settings {
+            exclusive_volume: true,
+            levelling: false,
+            ..exclusive()
+        },
+    ] {
+        let mut rig = levelled_rig(settings, 0.5);
+        rig.play("sine_16_44100.flac");
+        assert!(signal(&rig.events).bit_perfect);
+        rig.until(ended);
+        let expected = raw("sine_16_44100.raw");
+        assert_eq!(
+            &rig.platform.last().bytes()[..expected.len()],
+            expected.as_slice()
+        );
+    }
 }

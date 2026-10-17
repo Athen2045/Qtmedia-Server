@@ -321,9 +321,15 @@ fn engine(which: &str, file: &str, mode: &str, next: Option<&str>) -> Res<()> {
     };
     let (events, inbox) = std::sync::mpsc::channel();
     let began = Instant::now();
-    let engine = AudioEngine::spawn(Arc::new(WasapiPlatform), settings, 1.0, move |event| {
-        let _ = events.send(event);
-    })?;
+    let engine = AudioEngine::spawn(
+        Arc::new(WasapiPlatform),
+        settings,
+        1.0,
+        Arc::new(|_| None),
+        move |event| {
+            let _ = events.send(event);
+        },
+    )?;
     // Queue the next track first: a short file is fully decoded before a
     // later `SetNext` arrives, which would test the non-gapless path instead.
     if let Some(next) = next {

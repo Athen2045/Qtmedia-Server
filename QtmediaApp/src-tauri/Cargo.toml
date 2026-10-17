@@ -40,7 +40,13 @@ rtrb = "=0.4.0"
 # Native audio engine output (WASAPI shared and exclusive).
 wasapi = "=0.24.0"
 # Endpoint properties (Bluetooth detection); same version and features wasapi uses.
-windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_Media_Audio", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_UI_Shell_PropertiesSystem"] }
+windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_Media_Audio", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_UI_Shell_PropertiesSystem", "Win32_System_Threading"] }
 
 [dev-dependencies]
 tempfile = "=3.25.0"
+
+# Dependencies are built without debug info in dev builds: it was most of the
+# multi-GB target/debug cache, and their frames are rarely stepped into. The
+# app's own code keeps full debug info.
+[profile.dev.package."*"]
+debug = false

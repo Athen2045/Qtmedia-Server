@@ -25,8 +25,15 @@ use rtrb::{Consumer, Producer, RingBuffer};
 
 use super::convert::Converter;
 use super::decoder::{DecodeError, Decoder, SourceFormat};
-use super::format::{negotiate, DeviceCaps, Negotiated, OutputMode, Policy, RateMismatch};
+use super::format::{negotiate, DeviceCaps, Negotiated, OutputMode, Policy, RateMismatch, Reason};
 use super::output::{Output, OutputError};
+
+mod pipeline;
+mod threads;
+
+use pipeline::*;
+pub use pipeline::{Feeder, NextTrack, Renderer};
+pub use threads::{AudioEngine, EngineSender};
 
 /// Seconds of converted audio the feeder keeps ahead of the device.
 const RING_SECONDS: usize = 2;
@@ -63,7 +70,12 @@ pub struct Settings {
     pub mode: OutputMode,
     pub rate_mismatch: RateMismatch,
     pub exclusive_volume: bool,
+    /// Play songs at one loudness (where software volume is allowed).
+    pub levelling: bool,
 }
+
+/// A song's loudness-levelling gain, if it has been measured.
+pub type Leveler = Arc<dyn Fn(&Path) -> Option<f32> + Send + Sync>;
 
 impl Default for Settings {
     fn default() -> Self {
@@ -72,6 +84,7 @@ impl Default for Settings {
             mode: OutputMode::Shared,
             rate_mismatch: RateMismatch::Strict,
             exclusive_volume: false,
+            levelling: true,
         }
     }
 }
@@ -162,298 +175,6 @@ pub enum Report {
         error: DecodeError,
     },
     DeviceFailed(OutputError),
-}
-
-// ---------------------------------------------------------------------------
-// Feeder (decoder thread)
-
-/// A next track whose output matches the current one.
-pub struct NextTrack {
-    decoder: Decoder,
-    converter: Converter,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Fill {
-    /// The ring is full; try again later.
-    Full,
-    Joined(u64),
-    Ended(u64),
-    /// Everything was pushed and the producer dropped.
-    Done,
-}
-
-pub struct Feeder {
-    session: u64,
-    decoder: Decoder,
-    converter: Converter,
-    ring: Option<Producer<u8>>,
-    frame: u64,
-    pending: Vec<u8>,
-    sent: usize,
-    pushed: u64,
-    next: Option<NextTrack>,
-    finished: bool,
-}
-
-impl Feeder {
-    fn new(session: u64, decoder: Decoder, converter: Converter, ring: Producer<u8>) -> Self {
-        let frame = converter.output().bytes_per_frame() as u64;
-        Self {
-            session,
-            decoder,
-            converter,
-            ring: Some(ring),
-            frame,
-            pending: Vec::new(),
-            sent: 0,
-            pushed: 0,
-            next: None,
-            finished: false,
-        }
-    }
-
-    fn set_next(&mut self, next: Option<NextTrack>) {
-        if !self.finished {
-            self.next = next;
-        }
-    }
-
-    fn set_gain(&mut self, gain: f32) {
-        self.converter.set_gain(gain);
-        if let Some(next) = self.next.as_mut() {
-            next.converter.set_gain(gain);
-        }
-    }
-
-    fn frame_after_pending(&self) -> u64 {
-        (self.pushed + (self.pending.len() - self.sent) as u64) / self.frame
-    }
-
-    fn fill(&mut self) -> Result<Fill, DecodeError> {
-        loop {
-            if self.sent < self.pending.len() {
-                let Some(ring) = self.ring.as_mut() else {
-                    return Ok(Fill::Done);
-                };
-                let (pushed, _) = ring.push_partial_slice(&self.pending[self.sent..]);
-                self.sent += pushed.len();
-                self.pushed += pushed.len() as u64;
-                if self.sent < self.pending.len() {
-                    return Ok(Fill::Full);
-                }
-            }
-            self.pending.clear();
-            self.sent = 0;
-            if self.finished {
-                // Dropping the producer tells the renderer the stream ended.
-                self.ring = None;
-                return Ok(Fill::Done);
-            }
-            match self.decoder.next_block()? {
-                Some(block) => self.converter.convert(&block, &mut self.pending),
-                None => match self.next.take() {
-                    Some(next) => {
-                        if !same_source(self.decoder.format(), next.decoder.format()) {
-                            self.converter.finish(&mut self.pending);
-                            self.converter = next.converter;
-                        }
-                        self.decoder = next.decoder;
-                        return Ok(Fill::Joined(self.frame_after_pending()));
-                    }
-                    None => {
-                        self.converter.finish(&mut self.pending);
-                        self.finished = true;
-                        return Ok(Fill::Ended(self.frame_after_pending()));
-                    }
-                },
-            }
-        }
-    }
-
-    /// Fills until the ring is full or the stream is done.
-    fn pump(&mut self, report: &mut dyn FnMut(Report)) -> Fill {
-        loop {
-            match self.fill() {
-                Ok(Fill::Joined(at_frame)) => report(Report::Joined {
-                    session: self.session,
-                    at_frame,
-                }),
-                Ok(Fill::Ended(at_frame)) => report(Report::Ended {
-                    session: self.session,
-                    at_frame,
-                }),
-                Ok(state) => return state,
-                Err(error) => {
-                    report(Report::DecodeFailed {
-                        session: self.session,
-                        error,
-                    });
-                    self.ring = None;
-                    self.finished = true;
-                    return Fill::Done;
-                }
-            }
-        }
-    }
-}
-
-/// Same decoded layout, so one converter (and resampler state) continues.
-fn same_source(a: &SourceFormat, b: &SourceFormat) -> bool {
-    (a.codec, a.sample_rate, a.channels, a.bits_per_sample)
-        == (b.codec, b.sample_rate, b.channels, b.bits_per_sample)
-}
-
-// ---------------------------------------------------------------------------
-// Renderer (render thread)
-
-pub struct Renderer {
-    output: Box<dyn Output>,
-    exclusive: bool,
-    float: bool,
-    frame: usize,
-    ring: Option<Consumer<u8>>,
-    running: bool,
-    primed: bool,
-    gain: f32,
-    scratch: Vec<u8>,
-}
-
-impl Renderer {
-    fn new(output: Box<dyn Output>, negotiated: &Negotiated) -> Self {
-        let format = output.format();
-        Self {
-            exclusive: negotiated.mode == OutputMode::Exclusive,
-            float: format.float,
-            frame: format.bytes_per_frame(),
-            output,
-            ring: None,
-            running: false,
-            primed: false,
-            gain: 1.0,
-            scratch: Vec::new(),
-        }
-    }
-
-    fn begin(&mut self, ring: Consumer<u8>, running: bool, gain: f32) -> Result<(), OutputError> {
-        self.output.flush()?;
-        self.ring = Some(ring);
-        self.running = running;
-        self.primed = false;
-        self.gain = gain;
-        Ok(())
-    }
-
-    fn end(&mut self) -> Result<(), OutputError> {
-        self.ring = None;
-        self.primed = false;
-        self.running = false;
-        self.output.flush()
-    }
-
-    fn pause(&mut self) -> Result<(), OutputError> {
-        if self.running {
-            self.running = false;
-            if self.primed {
-                self.output.pause()?;
-            }
-        }
-        Ok(())
-    }
-
-    fn resume(&mut self) -> Result<(), OutputError> {
-        if !self.running {
-            self.running = true;
-            if self.primed {
-                self.output.start()?;
-            }
-        }
-        Ok(())
-    }
-
-    fn played(&mut self) -> Result<u64, OutputError> {
-        self.output.position_frames()
-    }
-
-    /// Whether the renderer is waiting on the device clock (rather than on
-    /// the feeder or a command).
-    fn is_active(&self) -> bool {
-        self.ring.is_some() && self.running && self.primed
-    }
-
-    /// One device period: wait for space, copy what the ring has. Before the
-    /// stream starts it prefills a whole buffer (or the whole short track).
-    /// Returns whether anything was written.
-    fn render(&mut self, timeout_ms: u32) -> Result<bool, OutputError> {
-        let Some(ring) = self.ring.as_mut() else {
-            return Ok(false);
-        };
-        if !self.running {
-            return Ok(false);
-        }
-        let available = ring.slots() / self.frame;
-        let finished = ring.is_abandoned();
-        let space = if self.primed {
-            self.output.wait(timeout_ms)?
-        } else {
-            let space = self.output.wait(0)?;
-            if available < space && !finished {
-                return Ok(false);
-            }
-            self.scratch.reserve(space * self.frame);
-            space
-        };
-        if space == 0 {
-            return Ok(false);
-        }
-        let frames = available.min(space);
-        // Exclusive mode must write every period (an empty write is a buffer
-        // of silence); shared mode simply skips.
-        if frames > 0 || self.exclusive {
-            let chunk = ring
-                .read_chunk(frames * self.frame)
-                .expect("available counts readable slots");
-            let (first, second) = chunk.as_slices();
-            let scale = self.float && self.gain != 1.0;
-            if second.is_empty() && !scale {
-                self.output.write(first)?;
-            } else {
-                self.scratch.clear();
-                self.scratch.extend_from_slice(first);
-                self.scratch.extend_from_slice(second);
-                if scale {
-                    apply_gain_f32(&mut self.scratch, self.gain);
-                }
-                self.output.write(&self.scratch)?;
-            }
-            chunk.commit_all();
-        }
-        if !self.primed {
-            self.primed = true;
-            self.output.start()?;
-        }
-        Ok(frames > 0)
-    }
-}
-
-/// Scales little-endian `f32` samples in place (shared-mode volume, applied
-/// at the device so slider changes are heard at once, not after the ring).
-fn apply_gain_f32(bytes: &mut [u8], gain: f32) {
-    for sample in bytes.chunks_exact_mut(4) {
-        let value = f32::from_le_bytes([sample[0], sample[1], sample[2], sample[3]]) * gain;
-        sample.copy_from_slice(&value.to_le_bytes());
-    }
-}
-
-/// Where the software volume is applied: at the renderer for float outputs
-/// (instant), else in the converter (exclusive integer output with the
-/// opt-in exclusive volume).
-fn split_gain(negotiated: &Negotiated) -> (f32, f32) {
-    if negotiated.output.float {
-        (1.0, negotiated.gain)
-    } else {
-        (negotiated.gain, 1.0)
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -607,6 +328,8 @@ impl Workers for InlineWorkers {
 struct Track {
     path: PathBuf,
     source: SourceFormat,
+    /// Loudness-levelling gain in use for this track (1.0 = none).
+    level: f32,
     /// What negotiation asked for (the open key) and what is in use.
     requested: Negotiated,
 }
@@ -625,6 +348,7 @@ struct Engine<W: Workers> {
     workers: W,
     settings: Settings,
     volume: f32,
+    leveler: Leveler,
     caps: Option<Box<dyn DeviceCaps>>,
     /// Requested and actual negotiation of the open output.
     open: Option<(Negotiated, Negotiated)>,
@@ -651,6 +375,7 @@ impl<W: Workers> Engine<W> {
             workers,
             settings,
             volume: volume.clamp(0.0, 1.0),
+            leveler: Arc::new(|_| None),
             caps: None,
             open: None,
             state: PlayState::Idle,
@@ -665,6 +390,18 @@ impl<W: Workers> Engine<W> {
             last_position: None,
             events: Vec::new(),
         }
+    }
+
+    /// The levelling gain for `path` on `actual`: none when levelling is off
+    /// or software volume is not allowed (bit-perfect exclusive stays exact).
+    fn level_for(&self, path: &Path, actual: &Negotiated) -> f32 {
+        let allowed = actual.mode == OutputMode::Shared || self.settings.exclusive_volume;
+        if !self.settings.levelling || !allowed {
+            return 1.0;
+        }
+        (self.leveler)(path)
+            .filter(|gain| gain.is_finite() && *gain > 0.0)
+            .unwrap_or(1.0)
     }
 
     fn policy(&self) -> Policy {
@@ -735,7 +472,7 @@ impl<W: Workers> Engine<W> {
     }
 
     fn open_track(&mut self, path: &Path) -> Result<(Decoder, Track), &'static str> {
-        let decoder = Decoder::open(path).map_err(|error| decode_code(error))?;
+        let decoder = Decoder::open(path).map_err(decode_code)?;
         let source = decoder.format().clone();
         let policy = self.policy();
         let requested = negotiate(&source, self.caps().map_err(|e| e.code())?, &policy);
@@ -744,6 +481,7 @@ impl<W: Workers> Engine<W> {
             Track {
                 path: path.to_path_buf(),
                 source,
+                level: 1.0,
                 requested,
             },
         ))
@@ -796,9 +534,14 @@ impl<W: Workers> Engine<W> {
         let policy = self.policy();
         let bluetooth = self.bluetooth();
         actual.apply_volume(&track.source, &policy, bluetooth);
+        let mut track = track;
+        track.level = self.level_for(&track.path, &actual);
+        apply_level(&mut actual, track.level);
         let (converter_gain, render_gain) = split_gain(&actual);
         let mut converter = Converter::new(&track.source, &actual);
         converter.set_gain(converter_gain);
+        converter.set_level(track.level);
+        converter.set_bluetooth(bluetooth);
         let format = actual.output;
         let capacity = (format.rate as usize * RING_SECONDS).max(1) * format.bytes_per_frame();
         let (producer, consumer) = RingBuffer::new(capacity);
@@ -888,8 +631,13 @@ impl<W: Workers> Engine<W> {
         let policy = self.policy();
         let bluetooth = self.bluetooth();
         actual.apply_volume(&track.source, &policy, bluetooth);
+        let mut track = track;
+        track.level = self.level_for(&track.path, &actual);
+        apply_level(&mut actual, track.level);
         let mut converter = Converter::new(&track.source, &actual);
         converter.set_gain(split_gain(&actual).0);
+        converter.set_level(track.level);
+        converter.set_bluetooth(bluetooth);
         self.next = Some((track, true));
         Some(NextTrack { decoder, converter })
     }
@@ -899,6 +647,14 @@ impl<W: Workers> Engine<W> {
             self.workers.pause();
             self.paused_at = Some(now);
             self.set_state(PlayState::Paused);
+            // Exclusive mode silences every other app: give the device back
+            // at once, so browsers and other players can open it while paused.
+            if self
+                .open
+                .is_some_and(|(_, actual)| actual.mode == OutputMode::Exclusive)
+            {
+                self.release();
+            }
         }
     }
 
@@ -923,6 +679,11 @@ impl<W: Workers> Engine<W> {
             return;
         };
         let running = self.state == PlayState::Playing;
+        if !running && self.released_at.is_some() {
+            // Stay released; resume opens the device at the new position.
+            self.released_at = Some(seconds.max(0.0));
+            return;
+        }
         let paused_at = self.paused_at;
         self.next = None;
         self.start(&path, seconds, running, Announce::Quiet);
@@ -966,9 +727,11 @@ impl<W: Workers> Engine<W> {
             return;
         };
         let before = actual;
+        let level = current.track.level;
         let policy = self.policy();
         let bluetooth = self.bluetooth();
         actual.apply_volume(&source, &policy, bluetooth);
+        apply_level(&mut actual, level);
         self.open = Some((requested, actual));
         let (converter, render) = split_gain(&actual);
         self.workers.set_gain(converter, render);
@@ -1182,6 +945,12 @@ pub struct ManualEngine {
 }
 
 impl ManualEngine {
+    /// Songs play at the gains `leveler` reports (see `loudness.rs`).
+    pub fn with_leveler(mut self, leveler: Leveler) -> Self {
+        self.engine.leveler = leveler;
+        self
+    }
+
     pub fn new(platform: Arc<dyn Platform>, settings: Settings, volume: f32) -> Self {
         let workers = InlineWorkers {
             platform: Some(platform.clone()),
@@ -1223,363 +992,6 @@ impl ManualEngine {
 
     pub fn take_events(&mut self) -> Vec<Event> {
         std::mem::take(&mut self.engine.events)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Threaded driver
-
-enum Message {
-    Command(Command),
-    Report(Report),
-    Shutdown,
-}
-
-enum FeedCommand {
-    Start(Feeder),
-    Stop,
-    SetNext(Option<NextTrack>),
-    SetGain(f32),
-    Shutdown,
-}
-
-enum RenderCommand {
-    Open {
-        device: Option<String>,
-        negotiated: Negotiated,
-        volume: f32,
-        reply: SyncSender<Result<Negotiated, OutputError>>,
-    },
-    Close,
-    Begin {
-        session: u64,
-        ring: Consumer<u8>,
-        running: bool,
-        gain: f32,
-    },
-    End,
-    Pause,
-    Resume,
-    SetGain(f32),
-    Shutdown,
-}
-
-/// Session id (top 16 bits) and frames played (low 48 bits) in one atomic,
-/// so control never pairs a new session with the old session's position.
-const SESSION_SHIFT: u32 = 48;
-const FRAME_MASK: u64 = (1 << SESSION_SHIFT) - 1;
-
-fn pack_played(session: u64, frames: u64) -> u64 {
-    (session << SESSION_SHIFT) | (frames & FRAME_MASK)
-}
-
-struct ThreadWorkers {
-    feed: Sender<FeedCommand>,
-    render: Sender<RenderCommand>,
-    played: Arc<AtomicU64>,
-}
-
-impl Workers for ThreadWorkers {
-    fn open(
-        &mut self,
-        device: Option<&str>,
-        negotiated: Negotiated,
-        volume: f32,
-    ) -> Result<Negotiated, OutputError> {
-        let (reply, answer) = mpsc::sync_channel(1);
-        self.render
-            .send(RenderCommand::Open {
-                device: device.map(str::to_owned),
-                negotiated,
-                volume,
-                reply,
-            })
-            .map_err(|_| OutputError::Unavailable)?;
-        answer
-            .recv_timeout(Duration::from_secs(10))
-            .unwrap_or(Err(OutputError::Unavailable))
-    }
-
-    fn close(&mut self) {
-        let _ = self.feed.send(FeedCommand::Stop);
-        let _ = self.render.send(RenderCommand::Close);
-    }
-
-    fn start(&mut self, session: Session) {
-        let _ = self.feed.send(FeedCommand::Start(session.feeder));
-        let _ = self.render.send(RenderCommand::Begin {
-            session: session.id,
-            ring: session.ring,
-            running: session.running,
-            gain: session.render_gain,
-        });
-    }
-
-    fn stop_session(&mut self) {
-        let _ = self.feed.send(FeedCommand::Stop);
-        let _ = self.render.send(RenderCommand::End);
-    }
-
-    fn set_next(&mut self, next: Option<NextTrack>) {
-        let _ = self.feed.send(FeedCommand::SetNext(next));
-    }
-
-    fn pause(&mut self) {
-        let _ = self.render.send(RenderCommand::Pause);
-    }
-
-    fn resume(&mut self) {
-        let _ = self.render.send(RenderCommand::Resume);
-    }
-
-    fn set_gain(&mut self, converter: f32, render: f32) {
-        let _ = self.feed.send(FeedCommand::SetGain(converter));
-        let _ = self.render.send(RenderCommand::SetGain(render));
-    }
-
-    fn played(&mut self, session: u64) -> Option<u64> {
-        let packed = self.played.load(Ordering::Acquire);
-        (packed >> SESSION_SHIFT == session & 0xFFFF).then_some(packed & FRAME_MASK)
-    }
-}
-
-/// Handle to the threaded engine. Dropping it shuts the threads down.
-pub struct AudioEngine {
-    commands: Sender<Message>,
-    threads: Vec<JoinHandle<()>>,
-}
-
-impl AudioEngine {
-    pub fn spawn(
-        platform: Arc<dyn Platform>,
-        settings: Settings,
-        volume: f32,
-        mut on_event: impl FnMut(Event) + Send + 'static,
-    ) -> std::io::Result<Self> {
-        let (commands, inbox) = mpsc::channel::<Message>();
-        let (feed, feed_inbox) = mpsc::channel();
-        let (render, render_inbox) = mpsc::channel();
-        let played = Arc::new(AtomicU64::new(0));
-
-        let reports = commands.clone();
-        let feeder = std::thread::Builder::new()
-            .name("qtmedia-audio-decode".into())
-            .spawn(move || feed_loop(feed_inbox, reports))?;
-
-        let reports = commands.clone();
-        let render_platform = platform.clone();
-        let render_played = played.clone();
-        let renderer = std::thread::Builder::new()
-            .name("qtmedia-audio-render".into())
-            .spawn(move || render_loop(render_platform, render_inbox, reports, render_played))?;
-
-        let control = std::thread::Builder::new()
-            .name("qtmedia-audio-control".into())
-            .spawn(move || {
-                let workers = ThreadWorkers {
-                    feed: feed.clone(),
-                    render: render.clone(),
-                    played,
-                };
-                let mut engine = Engine::new(platform, workers, settings, volume);
-                loop {
-                    let wait = if engine.boundary_due() {
-                        FAST_TICK
-                    } else {
-                        TICK
-                    };
-                    match inbox.recv_timeout(wait) {
-                        Ok(Message::Command(command)) => engine.handle(command, Instant::now()),
-                        Ok(Message::Report(report)) => engine.report(report),
-                        Ok(Message::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
-                        Err(RecvTimeoutError::Timeout) => {}
-                    }
-                    engine.tick(Instant::now());
-                    for event in engine.events.drain(..) {
-                        on_event(event);
-                    }
-                }
-                engine.stop(PlayState::Stopped);
-                let _ = feed.send(FeedCommand::Shutdown);
-                let _ = render.send(RenderCommand::Shutdown);
-            })?;
-
-        Ok(Self {
-            commands,
-            threads: vec![control, feeder, renderer],
-        })
-    }
-
-    pub fn send(&self, command: Command) {
-        let _ = self.commands.send(Message::Command(command));
-    }
-
-    /// A cloneable handle for other threads (e.g. the device watcher).
-    pub fn sender(&self) -> EngineSender {
-        EngineSender(self.commands.clone())
-    }
-}
-
-/// Sends commands to a running [`AudioEngine`]; a no-op once it has stopped.
-#[derive(Clone)]
-pub struct EngineSender(Sender<Message>);
-
-impl EngineSender {
-    pub fn send(&self, command: Command) {
-        let _ = self.0.send(Message::Command(command));
-    }
-}
-
-impl Drop for AudioEngine {
-    fn drop(&mut self) {
-        let _ = self.commands.send(Message::Shutdown);
-        for thread in self.threads.drain(..) {
-            let _ = thread.join();
-        }
-    }
-}
-
-fn feed_loop(inbox: Receiver<FeedCommand>, reports: Sender<Message>) {
-    let mut feeder: Option<Feeder> = None;
-    let mut full = false;
-    loop {
-        let command = if feeder.is_none() {
-            match inbox.recv() {
-                Ok(command) => Some(command),
-                Err(_) => return,
-            }
-        } else if full {
-            match inbox.recv_timeout(Duration::from_millis(10)) {
-                Ok(command) => Some(command),
-                Err(RecvTimeoutError::Timeout) => None,
-                Err(RecvTimeoutError::Disconnected) => return,
-            }
-        } else {
-            match inbox.try_recv() {
-                Ok(command) => Some(command),
-                Err(TryRecvError::Empty) => None,
-                Err(TryRecvError::Disconnected) => return,
-            }
-        };
-        match command {
-            None => {}
-            Some(FeedCommand::Shutdown) => return,
-            Some(FeedCommand::Start(next)) => feeder = Some(next),
-            Some(FeedCommand::Stop) => feeder = None,
-            Some(FeedCommand::SetNext(next)) => {
-                if let Some(feeder) = feeder.as_mut() {
-                    feeder.set_next(next);
-                }
-            }
-            Some(FeedCommand::SetGain(gain)) => {
-                if let Some(feeder) = feeder.as_mut() {
-                    feeder.set_gain(gain);
-                }
-            }
-        }
-        if let Some(active) = feeder.as_mut() {
-            let state = active.pump(&mut |report| {
-                let _ = reports.send(Message::Report(report));
-            });
-            full = state == Fill::Full;
-            if state == Fill::Done {
-                feeder = None;
-            }
-        }
-    }
-}
-
-fn render_loop(
-    platform: Arc<dyn Platform>,
-    inbox: Receiver<RenderCommand>,
-    reports: Sender<Message>,
-    played: Arc<AtomicU64>,
-) {
-    let mut renderer: Option<Renderer> = None;
-    let mut session = 0u64;
-    loop {
-        // Block for commands unless the device clock is driving the loop.
-        let command = match &renderer {
-            Some(active) if active.is_active() => match inbox.try_recv() {
-                Ok(command) => Some(command),
-                Err(TryRecvError::Empty) => None,
-                Err(TryRecvError::Disconnected) => return,
-            },
-            Some(active) if active.ring.is_some() && active.running => {
-                // Prefilling: poll the feeder briefly.
-                match inbox.recv_timeout(Duration::from_millis(2)) {
-                    Ok(command) => Some(command),
-                    Err(RecvTimeoutError::Timeout) => None,
-                    Err(RecvTimeoutError::Disconnected) => return,
-                }
-            }
-            _ => match inbox.recv() {
-                Ok(command) => Some(command),
-                Err(_) => return,
-            },
-        };
-        let result = match command {
-            None => Ok(()),
-            Some(RenderCommand::Shutdown) => return,
-            Some(RenderCommand::Open {
-                device,
-                negotiated,
-                volume,
-                reply,
-            }) => {
-                renderer = None;
-                let opened = platform.open(device.as_deref(), negotiated, volume);
-                let _ = reply.send(match opened {
-                    Ok((output, actual)) => {
-                        renderer = Some(Renderer::new(output, &actual));
-                        Ok(actual)
-                    }
-                    Err(error) => Err(error),
-                });
-                Ok(())
-            }
-            Some(RenderCommand::Close) => {
-                renderer = None;
-                Ok(())
-            }
-            Some(RenderCommand::Begin {
-                session: id,
-                ring,
-                running,
-                gain,
-            }) => match renderer.as_mut() {
-                Some(active) => {
-                    session = id & 0xFFFF;
-                    played.store(pack_played(session, 0), Ordering::Release);
-                    active.begin(ring, running, gain)
-                }
-                None => Ok(()),
-            },
-            Some(RenderCommand::End) => renderer.as_mut().map_or(Ok(()), Renderer::end),
-            Some(RenderCommand::Pause) => renderer.as_mut().map_or(Ok(()), Renderer::pause),
-            Some(RenderCommand::Resume) => renderer.as_mut().map_or(Ok(()), Renderer::resume),
-            Some(RenderCommand::SetGain(gain)) => {
-                if let Some(active) = renderer.as_mut() {
-                    active.gain = gain;
-                }
-                Ok(())
-            }
-        };
-        let result = result.and_then(|()| match renderer.as_mut() {
-            Some(active) => {
-                active.render(RENDER_WAIT_MS)?;
-                if active.ring.is_some() {
-                    let frames = active.played()?;
-                    played.store(pack_played(session, frames), Ordering::Release);
-                }
-                Ok(())
-            }
-            None => Ok(()),
-        });
-        if let Err(error) = result {
-            renderer = None;
-            let _ = reports.send(Message::Report(Report::DeviceFailed(error)));
-        }
     }
 }
 

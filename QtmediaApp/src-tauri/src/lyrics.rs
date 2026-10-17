@@ -87,6 +87,26 @@ pub struct TrackInfo {
     pub artist: Option<String>,
     pub album: Option<String>,
     pub duration_seconds: Option<f64>,
+    /// Set when a lossless file (FLAC) was made from a lossy stream: the
+    /// stream's codec and bitrate from Qtmedia's `SOURCE_CODEC` /
+    /// `SOURCE_BITRATE` tags ("Opus 160 kbps"), or "unknown" for a FLAC that
+    /// FFmpeg wrote (`ENCODER=Lavf…`, as every older Qtmedia download).
+    pub lossy_source: Option<String>,
+}
+
+/// "opus" + "160" → "Opus 160 kbps".
+fn describe_source(codec: &str, bitrate: Option<&str>) -> String {
+    let name = match codec.to_ascii_lowercase().as_str() {
+        "opus" => "Opus".to_owned(),
+        "aac" => "AAC".to_owned(),
+        "vorbis" => "Vorbis".to_owned(),
+        "mp3" => "MP3".to_owned(),
+        other => other.to_ascii_uppercase(),
+    };
+    match bitrate.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(kbps) => format!("{name} {kbps} kbps"),
+        None => name,
+    }
 }
 
 /// Reads title/artist/album tags (Vorbis comments or ID3) and the duration of
@@ -114,12 +134,19 @@ pub fn read_track_info(root: &Path, relative_song: &str) -> Option<TrackInfo> {
     ) else {
         return Some(info);
     };
+    let mut decoded_shape = (None, None);
     if let Some(track) = reader.default_track(TrackType::Audio) {
         let rate = track
             .codec_params
             .as_ref()
             .and_then(|params| params.audio())
             .and_then(|params| params.sample_rate);
+        let bits = track
+            .codec_params
+            .as_ref()
+            .and_then(|params| params.audio())
+            .and_then(|params| params.bits_per_sample);
+        decoded_shape = (rate, bits);
         if let (Some(frames), Some(rate)) = (track.num_frames, rate) {
             info.duration_seconds = Some(frames as f64 / f64::from(rate));
         }
@@ -130,6 +157,35 @@ pub fn read_track_info(root: &Path, relative_song: &str) -> Option<TrackInfo> {
         revisions.push(revision);
     }
     revisions.extend(metadata.current().cloned());
+    let raw = |wanted: &str| {
+        revisions
+            .iter()
+            .flat_map(|revision| revision.media.tags.iter())
+            .find_map(|tag| match &tag.raw.value {
+                symphonia::core::meta::RawValue::String(value)
+                    if tag.raw.key.eq_ignore_ascii_case(wanted) && !value.trim().is_empty() =>
+                {
+                    Some(value.trim().to_owned())
+                }
+                _ => None,
+            })
+    };
+    let is_flac = song
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("flac"));
+    if is_flac {
+        info.lossy_source = match raw("SOURCE_CODEC") {
+            Some(codec) => Some(describe_source(&codec, raw("SOURCE_BITRATE").as_deref())),
+            // FFmpeg writes decoded Opus/AAC as 24-bit at 44.1/48 kHz (every
+            // older Qtmedia download); CD rips are 16-bit, hi-res masters
+            // 88.2 kHz and up, so those are taken as lossless.
+            None => raw("ENCODER")
+                .filter(|encoder| encoder.starts_with("Lavf"))
+                .filter(|_| matches!(decoded_shape, (Some(44_100 | 48_000), Some(24))))
+                .map(|_| "unknown".to_owned()),
+        };
+    }
     for revision in &revisions {
         for tag in &revision.media.tags {
             let (slot, value) = match &tag.std {

@@ -10,6 +10,7 @@ from qtmedia.desktop_service.models import (
     Inspection,
     InspectionResult,
 )
+
 from qtmedia_engine.engine import Engine
 from qtmedia_engine.protocol import Request
 

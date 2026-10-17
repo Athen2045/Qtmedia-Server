@@ -4,6 +4,7 @@ import { isTauri } from "@tauri-apps/api/core";
 
 import { App } from "./App";
 import type { DesktopBridge } from "./lib/bridge";
+import { installResizeHint } from "./lib/resizeHint";
 
 async function resolveBridge(): Promise<DesktopBridge | undefined> {
   // `import.meta.env.DEV` is statically false in release builds, so the mock
@@ -15,6 +16,8 @@ async function resolveBridge(): Promise<DesktopBridge | undefined> {
   }
   return undefined;
 }
+
+installResizeHint();
 
 void resolveBridge().then((bridge) => {
   createRoot(document.getElementById("root")!).render(

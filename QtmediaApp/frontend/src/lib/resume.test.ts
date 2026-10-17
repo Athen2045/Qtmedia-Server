@@ -76,3 +76,13 @@ describe("resume store", () => {
     expect(store.get("video/A.mp4")).toBe(60);
   });
 });
+
+describe("saved position list", () => {
+  it("lists positions newest first", () => {
+    const storage = new Map<string, string>();
+    const store = createResumeStore({ getItem: (k) => storage.get(k) ?? null, setItem: (k, v) => void storage.set(k, v), removeItem: (k) => void storage.delete(k) }, { now: (() => { let t = 0; return () => (t += 1); })() });
+    store.save("video/A.mp4", 20, 600);
+    store.save("video/B.mp4", 40, 600);
+    expect(store.list().map((item) => [item.relativePath, item.position])).toEqual([["video/B.mp4", 40], ["video/A.mp4", 20]]);
+  });
+});

@@ -1,34 +1,38 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
-import { activeLineIndex, type Lyrics, type LyricsState } from "../lib/lyrics";
+import { activeLineIndex, type LyricLine, type Lyrics, type LyricsState } from "../lib/lyrics";
 
 /** How long a manual scroll pauses auto-centring. */
 const MANUAL_SCROLL_PAUSE_MS = 2500;
 
 /**
- * Smooths the player position between `timeupdate` events (about 4 per second)
- * so lines change on the beat rather than up to 250 ms late.
+ * The active line, from a position smoothed between `timeupdate` events
+ * (about 4 per second) so lines change on the beat rather than up to 250 ms
+ * late. Only the line index is state, so the list re-renders when the line
+ * changes, not on every animation frame.
  */
-function useSmoothPosition(position: number, playing: boolean) {
+function useActiveLine(lines: LyricLine[], position: number, playing: boolean, offset: number) {
   const anchor = useRef({ position, at: performance.now() });
-  const [smooth, setSmooth] = useState(position);
-  useEffect(() => {
+  const [active, setActive] = useState(() => activeLineIndex(lines, position + offset));
+  // Layout effect: a new position or nudge never paints the old line first.
+  useLayoutEffect(() => {
     anchor.current = { position, at: performance.now() };
-    setSmooth(position);
-  }, [position]);
+    setActive(activeLineIndex(lines, position + offset));
+  }, [lines, position, offset]);
   useEffect(() => {
     if (!playing) return;
     let frame = 0;
     const tick = () => {
       const { position: base, at } = anchor.current;
       // Never run more than one update interval ahead of the real clock.
-      setSmooth(base + Math.min(0.35, (performance.now() - at) / 1000));
+      const smooth = base + Math.min(0.35, (performance.now() - at) / 1000);
+      setActive(activeLineIndex(lines, smooth + offset));
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [playing]);
-  return smooth;
+  }, [lines, playing, offset]);
+  return active;
 }
 
 export function LyricsPanel({ state, position, playing, onSeek, trackKey }: {
@@ -62,8 +66,7 @@ function Credit({ source, synced }: { source: Lyrics["source"]; synced: boolean 
 
 function SyncedLyrics({ lyrics, position, playing, onSeek }: { lyrics: Extract<Lyrics, { kind: "synced" }>; position: number; playing: boolean; onSeek: (seconds: number) => void }) {
   const [offset, setOffset] = useState(0);
-  const smooth = useSmoothPosition(position, playing);
-  const active = activeLineIndex(lyrics.lines, smooth + offset);
+  const active = useActiveLine(lyrics.lines, position, playing, offset);
   const scroller = useRef<HTMLDivElement>(null);
   const manualUntil = useRef(0);
 

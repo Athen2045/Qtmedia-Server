@@ -16,6 +16,7 @@ import type {
 } from "../lib/bridge";
 import { onlineLyricsEnabled, setOnlineLyricsEnabled } from "../lib/lyrics";
 import { useOptionalPlayer } from "../lib/player";
+import { MAX_BLUETOOTH_DELAY_MS, useBluetoothDelay, writeBluetoothDelay } from "../lib/bluetoothDelay";
 import { Icon } from "./Icon";
 import { QMark } from "./QMark";
 import { Toolbar } from "./Shell";
@@ -343,6 +344,20 @@ function transportLabel(device: AudioDevice) {
   return "";
 }
 
+/** Lyrics delay for Bluetooth headsets: lyrics wait this long to match what is heard. */
+function BluetoothDelayRow() {
+  const delay = useBluetoothDelay();
+  return (
+    <div className="group">
+      <div className="group-row">
+        <span className="row-icon" aria-hidden="true"><Icon name="lyrics" /></span>
+        <div className="row-label"><h3 id="bt-delay-label">Lyrics delay on Bluetooth</h3><span>If lyrics run ahead of the singing, raise this until they match ({delay} ms).</span></div>
+        <input type="range" className="slider row-slider" aria-labelledby="bt-delay-label" min={0} max={MAX_BLUETOOTH_DELAY_MS} step={10} value={delay} style={{ "--fill": `${(delay / MAX_BLUETOOTH_DELAY_MS) * 100}%` } as React.CSSProperties} onChange={(event) => writeBluetoothDelay(Number(event.target.value))} />
+      </div>
+    </div>
+  );
+}
+
 /** Settings → Audio: output device, shared/exclusive mode, rate fallback, exclusive volume. */
 function AudioGroup({ audio }: { audio: NativeAudio }) {
   const [settings, setSettings] = useState<AudioSettings | null>(null);
@@ -428,7 +443,20 @@ function AudioGroup({ audio }: { audio: NativeAudio }) {
             </div>
           </>
         ) : null}
+        <div className="group-row">
+          <span className="row-icon" aria-hidden="true"><Icon name="volume" /></span>
+          <div className="row-label">
+            <h3 id="audio-levelling-label">Volume levelling</h3>
+            <span>{exclusive && !settings?.exclusiveVolume
+              ? "Plays songs at one loudness. Off in exclusive mode unless volume control is allowed, so playback stays bit-perfect."
+              : "Plays every song at the same loudness, so you don't reach for the volume between tracks."}</span>
+          </div>
+          <button type="button" role="switch" className="switch" aria-checked={settings?.levelling ?? true} aria-labelledby="audio-levelling-label" disabled={locked} onClick={() => void change({ levelling: !(settings?.levelling ?? true) })}>
+            <span className="switch__thumb" />
+          </button>
+        </div>
       </div>
+      {active?.transport === "bluetooth" ? <BluetoothDelayRow /> : null}
       {active?.transport === "bluetoothHandsFree" ? (
         <p className="group-foot group-foot--notice" role="status">This is the headset's call profile: mono, phone quality. Choose its "Headphones" output for music.</p>
       ) : active?.transport === "bluetooth" ? (

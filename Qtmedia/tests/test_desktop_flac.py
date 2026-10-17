@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import qtmedia.desktop_service.download as desktop_download
 from qtmedia.desktop_service.download import build_download_options, download_media
 from qtmedia.desktop_service.inspection import inspect_url
 from qtmedia.desktop_service.models import (
@@ -117,5 +118,79 @@ def test_flac_downloads_are_saved_as_flac(monkeypatch, tmp_path: Path):
 
     result = download_media(_flac_media(), "fmt-flac", library, lambda _event: None, threading.Event())
 
-    assert result.relative_path == "audio/Song [media-1].flac"
+    assert result.relative_path == "audio/Song.flac"
     assert result.extension == "flac"
+
+
+def test_lossy_codecs_are_recognised():
+    from qtmedia.desktop_service.song_tags import lossy_codec
+
+    assert lossy_codec("opus") == "opus"
+    assert lossy_codec("mp4a.40.2") == "aac"
+    assert lossy_codec("vorbis") == "vorbis"
+    assert lossy_codec("flac") is None
+    assert lossy_codec("alac") is None
+    assert lossy_codec("none") is None
+    assert lossy_codec(None) is None
+
+
+def test_a_flac_from_a_lossy_stream_is_tagged_with_its_source(monkeypatch, tmp_path: Path):
+    library = MediaLibrary.create(tmp_path / "library")
+    written: list[tuple[str, object, object]] = []
+
+    class FakeYdl:
+        def __init__(self, opts):
+            self.hooks = opts["progress_hooks"]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def download(self, _sources):
+            for hook in self.hooks:
+                hook({"status": "downloading", "filename": "x", "downloaded_bytes": 1, "total_bytes": 2,
+                      "info_dict": {"acodec": "opus", "abr": 159.8}})
+            (library.temp / "Song [media-1].flac").write_bytes(b"fLaC")
+            return 0
+
+    monkeypatch.setitem(sys.modules, "yt_dlp", types.SimpleNamespace(YoutubeDL=FakeYdl))
+    monkeypatch.setattr(
+        desktop_download, "write_source_tags",
+        lambda path, acodec, abr: written.append((path.name, acodec, abr)) or True,
+    )
+
+    download_media(_flac_media(), "fmt-flac", library, lambda _event: None, threading.Event())
+
+    assert written == [("Song.flac", "opus", 159.8)]
+
+
+def test_write_source_tags_marks_only_flacs_from_lossy_codecs(tmp_path: Path):
+    from qtmedia.desktop_service.song_tags import write_source_tags
+
+    mp3 = tmp_path / "a.mp3"
+    mp3.write_bytes(b"ID3")
+    assert write_source_tags(mp3, "opus", 160) is False
+    flac = tmp_path / "b.flac"
+    flac.write_bytes(b"fLaC")
+    assert write_source_tags(flac, "flac", None) is False
+
+
+def test_source_tags_are_written_into_a_real_flac(tmp_path: Path):
+    from mutagen.flac import FLAC
+
+    from qtmedia.desktop_service.song_tags import write_source_tags
+
+    fixture = Path(__file__).resolve().parents[2] / "QtmediaApp/src-tauri/tests/fixtures/audio/tagged.flac"
+    if not fixture.is_file():
+        pytest.skip("desktop audio fixtures not present")
+    song = tmp_path / "Song.flac"
+    song.write_bytes(fixture.read_bytes())
+
+    assert write_source_tags(song, "mp4a.40.2", 129.5) is True
+
+    tags = FLAC(song)
+    assert tags["SOURCE_CODEC"] == ["aac"]
+    assert tags["SOURCE_BITRATE"] == ["130"]
+    assert tags["title"] == ["Fixture Song"]

@@ -1,35 +1,41 @@
-import "@videojs/react/video/skin.css";
-
-import { SeekButton } from "@videojs/react";
-import { Video, VideoPlayer, VideoSkin } from "@videojs/react/video";
+import { Container } from "@videojs/react";
+import { Video, VideoPlayer } from "@videojs/react/video";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { DesktopBridge, LibraryEntry } from "../lib/bridge";
 import { formatDuration, mediaTitle } from "../lib/library";
+import { useOptionalPlayer } from "../lib/player";
 import { createResumeStore, type ResumeStore } from "../lib/resume";
 import { useStableVolume } from "../lib/stableVolume";
+import { usePlayableSource } from "../lib/playableSource";
+import { languageTag, pickTrack, readSubtitleChoice, trackLabels, useSubtitles, writeSubtitleChoice } from "../lib/subtitles";
+import { readAutoplay, readVideoVolume, writeAutoplay, writeVideoVolume } from "../lib/videoPrefs";
 import { Icon } from "./Icon";
+import { VideoControls } from "./VideoControls";
 
 /** Save at most this often while playing; pause, close and end always save. */
 const SAVE_INTERVAL_MS = 5000;
-/** Matches the skin's ←/→ and J/L hotkeys (Video.js DEFAULT_SEEK_STEP). */
-const SKIP_SECONDS = 10;
+/** Seconds the "Up next" card counts down before the next video starts. */
+export const AUTOPLAY_SECONDS = 5;
+/** How long the "Resumed at" note stays before it fades away by itself. */
+const RESUME_NOTE_MS = 6000;
 
-function SkipIcon({ forward }: { forward?: boolean }) {
-  return (
-    <svg viewBox="0 0 24 24" width="36" height="36" aria-hidden="true" style={forward ? { transform: "scaleX(-1)" } : undefined}>
-      <path d="M12 5V2L7 6l5 4V7a6 6 0 1 1-6 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-      <text x="12.4" y="16.6" textAnchor="middle" fontSize="7" fontWeight="700" fill="currentColor" style={forward ? { transform: "scaleX(-1)", transformOrigin: "12.4px 0" } : undefined}>{SKIP_SECONDS}</text>
-    </svg>
-  );
-}
+/** The videos either side of the playing one, in the order the opening page showed. */
+export type VideoNavigation = {
+  previous: LibraryEntry | null;
+  next: LibraryEntry | null;
+  onPrevious(): void;
+  onNext(): void;
+};
 
-/** Full-window Video.js player for one library video. Loaded lazily by App. */
-export default function VideoOverlay({ bridge, entry, onClose, resume }: {
+/** Full-window Video.js player for library videos. Loaded lazily by App. The
+ * player stays mounted when `entry` changes, so full screen survives Next. */
+export default function VideoOverlay({ bridge, entry, onClose, resume, navigation }: {
   bridge: DesktopBridge;
   entry: LibraryEntry;
   onClose: () => void;
   resume?: ResumeStore;
+  navigation?: VideoNavigation;
 }) {
   const store = useMemo(() => resume ?? createResumeStore(), [resume]);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -39,17 +45,203 @@ export default function VideoOverlay({ bridge, entry, onClose, resume }: {
   const lastSaveRef = useRef(0);
   const [resumedAt, setResumedAt] = useState<number | null>(null);
   const [failed, setFailed] = useState(false);
+  const [autoplay, setAutoplay] = useState(readAutoplay);
+  // Seconds left before the next video starts, while the "Up next" card shows.
+  const [upNext, setUpNext] = useState<number | null>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const windowFullscreenRef = useRef(false);
   const title = mediaTitle(entry);
   const source = usePlayableSource(bridge, entry.relativePath);
+  const [subtitlesToken, setSubtitlesToken] = useState(0);
+  const subtitles = useSubtitles(bridge, entry.relativePath, subtitlesToken);
+  const [subtitleNote, setSubtitleNote] = useState<string | null>(null);
+  const subtitleLabels = useMemo(() => trackLabels(subtitles.tracks), [subtitles.tracks]);
+  const subtitleOptions = useMemo(() => subtitles.tracks.map((track, index) => ({ id: track.id, label: subtitleLabels[index] })), [subtitles.tracks, subtitleLabels]);
   const src = source.kind === "ready" ? source.src : undefined;
+  // Whether the player was on screen last render (kept while switching videos).
+  const playerShownRef = useRef(false);
+  useEffect(() => {
+    if (source.kind !== "checking") playerShownRef.current = source.kind === "ready" && !failed;
+  });
 
+  // True from a switch until the next video's metadata loads: the old video's
+  // late pause/time events must not be saved under the new video's path.
+  const switchingRef = useRef(false);
   const save = useCallback(() => {
     const element = videoRef.current;
-    if (element) store.save(entry.relativePath, element.currentTime, element.duration);
+    if (element && !switchingRef.current) store.save(entry.relativePath, element.currentTime, element.duration);
   }, [entry.relativePath, store]);
 
+  // A new video starts with a clean slate (the old one's position is saved
+  // before navigating). Removing `src` alone would leave the old one playing.
+  const shownPathRef = useRef(entry.relativePath);
+  useEffect(() => {
+    if (shownPathRef.current === entry.relativePath) return;
+    shownPathRef.current = entry.relativePath;
+    setResumedAt(null);
+    setFailed(false);
+    setUpNext(null);
+    lastSaveRef.current = 0;
+    const element = videoRef.current;
+    if (element?.hasAttribute("src")) {
+      switchingRef.current = true;
+      element.pause();
+      element.removeAttribute("src");
+      element.load();
+    }
+  }, [entry.relativePath]);
+
+  const goPrevious = useMemo(() => (navigation?.previous ? () => { save(); navigation.onPrevious(); } : null), [navigation, save]);
+  const goNext = useMemo(() => (navigation?.next ? () => { save(); navigation.onNext(); } : null), [navigation, save]);
+
+  const toggleAutoplay = () => {
+    setAutoplay((on) => {
+      writeAutoplay(!on);
+      return !on;
+    });
+    setUpNext(null);
+  };
+
+  // The "Up next" countdown; it starts when a video ends with autoplay on.
+  useEffect(() => {
+    if (upNext === null) return;
+    if (upNext <= 0) {
+      setUpNext(null);
+      goNext?.();
+      return;
+    }
+    const timer = window.setTimeout(() => setUpNext((left) => (left === null ? null : left - 1)), 1000);
+    return () => window.clearTimeout(timer);
+  }, [goNext, upNext]);
+
+  const onEnded = () => {
+    if (switchingRef.current) return;
+    store.clear(entry.relativePath);
+    if (autoplay && goNext) setUpNext(AUTOPLAY_SECONDS);
+  };
+
+  // Show the remembered subtitle choice on each video's tracks, and remember
+  // what the viewer picks with the player's captions button, menu or C key.
+  const applyingRef = useRef(false);
+  useEffect(() => {
+    const list = videoElement?.textTracks;
+    if (!list || typeof list.addEventListener !== "function" || !subtitles.tracks.length) return;
+    const chosen = pickTrack(subtitles.tracks, readSubtitleChoice());
+    applyingRef.current = true;
+    for (let index = 0; index < list.length; index += 1) {
+      const track = list[index];
+      if (track.kind !== "subtitles") continue;
+      const mode = chosen && track.id === chosen.id ? "showing" : "disabled";
+      if (track.mode !== mode) track.mode = mode;
+    }
+    applyingRef.current = false;
+    let kept = chosen?.id ?? null;
+    const record = () => {
+      if (applyingRef.current) return;
+      const tracks = Array.from(list).filter((track) => track.kind === "subtitles" && subtitles.tracks.some((item) => item.id === track.id));
+      if (!tracks.length) return;
+      const on = tracks.filter((track) => track.mode === "showing");
+      if (on.length > 1) {
+        // The player's menu always leaves one track on; two means the webview
+        // switched one on by itself. Keep the track already chosen.
+        const keep = on.find((track) => track.id === kept) ?? on[0];
+        applyingRef.current = true;
+        for (const track of on) if (track !== keep) track.mode = "disabled";
+        applyingRef.current = false;
+      }
+      kept = tracks.find((track) => track.mode === "showing")?.id ?? null;
+      const showing = subtitles.tracks.find((item) => item.id === kept);
+      writeSubtitleChoice(showing ? { enabled: true, ...(showing.language ? { language: showing.language } : {}), ...(showing.label ? { label: showing.label } : {}) } : { enabled: false });
+    };
+    list.addEventListener("change", record);
+    return () => list.removeEventListener("change", record);
+  }, [videoElement, subtitles.tracks]);
+
+  const addSubtitles = async () => {
+    if (!bridge.addSubtitles) return;
+    try {
+      const added = await bridge.addSubtitles(entry.relativePath);
+      if (!added) {
+        if (added === 0) setSubtitleNote("Only .srt and .vtt files can be added.");
+        return;
+      }
+      // Show the new subtitles straight away.
+      writeSubtitleChoice({ enabled: true });
+      setSubtitleNote(added === 1 ? "Subtitles added." : `${added} subtitle files added.`);
+      setSubtitlesToken((token) => token + 1);
+    } catch {
+      setSubtitleNote("The subtitles could not be added.");
+    }
+  };
+
+  useEffect(() => {
+    if (!subtitleNote) return;
+    const timer = window.setTimeout(() => setSubtitleNote(null), 3000);
+    return () => window.clearTimeout(timer);
+  }, [subtitleNote]);
+
+  // The player keeps one volume across videos and sessions.
+  useEffect(() => {
+    if (!videoElement) return;
+    const saved = readVideoVolume();
+    if (saved) {
+      videoElement.volume = saved.volume;
+      videoElement.muted = saved.muted;
+    }
+    const remember = () => writeVideoVolume(videoElement.volume, videoElement.muted);
+    videoElement.addEventListener("volumechange", remember);
+    return () => videoElement.removeEventListener("volumechange", remember);
+  }, [videoElement]);
+
+  // Media keys and the system media overlay follow the video while it is open.
+  const setVideoActive = useOptionalPlayer()?.setVideoActive;
+  useEffect(() => {
+    setVideoActive?.(true);
+    return () => setVideoActive?.(false);
+  }, [setVideoActive]);
+  useEffect(() => {
+    const session = typeof navigator !== "undefined" ? navigator.mediaSession : undefined;
+    if (!session) return;
+    const togglePlay = () => {
+      const element = videoRef.current;
+      if (!element) return;
+      if (element.paused) void element.play().catch(() => undefined);
+      else element.pause();
+    };
+    const handlers: Array<[MediaSessionAction, (() => void) | null]> = [
+      ["play", togglePlay], ["pause", togglePlay], ["nexttrack", goNext], ["previoustrack", goPrevious],
+    ];
+    try {
+      if (typeof MediaMetadata !== "undefined") session.metadata = new MediaMetadata({ title, artist: "Qtmedia" });
+    } catch { /* metadata unsupported */ }
+    for (const [action, handler] of handlers) {
+      try { session.setActionHandler(action, handler); } catch { /* unsupported action */ }
+    }
+    return () => {
+      for (const [action] of handlers) {
+        try { session.setActionHandler(action, null); } catch { /* unsupported action */ }
+      }
+    };
+  }, [goNext, goPrevious, title]);
+
+  useEffect(() => {
+    if (resumedAt === null) return;
+    const timer = window.setTimeout(() => setResumedAt(null), RESUME_NOTE_MS);
+    return () => window.clearTimeout(timer);
+  }, [resumedAt]);
+
+  // Subtitles chosen from the CC button or the settings menu; the change
+  // listener above remembers the choice.
+  const chooseSubtitle = (id: string | null) => {
+    const list = videoElement?.textTracks;
+    if (!list) return;
+    for (let index = 0; index < list.length; index += 1) {
+      const track = list[index];
+      if (track.kind === "subtitles") track.mode = track.id === id ? "showing" : "disabled";
+    }
+  };
+  const preferredSubtitle = () => pickTrack(subtitles.tracks, { ...readSubtitleChoice(), enabled: true })?.id ?? null;
+  const playable = source.kind === "ready" && !failed;
   const close = useCallback(() => {
     save();
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
@@ -86,13 +278,23 @@ export default function VideoOverlay({ bridge, entry, onClose, resume }: {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       // In full screen the browser uses Esc to leave full screen first.
-      if (event.key === "Escape" && !document.fullscreenElement) close();
+      if (event.key === "Escape" && upNext !== null) setUpNext(null);
+      else if (event.key === "Escape" && !document.fullscreenElement) close();
+      // YouTube's keys: Shift+N next video, Shift+P previous video.
+      else if (event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        const go = event.code === "KeyN" ? goNext : event.code === "KeyP" ? goPrevious : null;
+        if (go) {
+          event.preventDefault();
+          go();
+        }
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [close]);
+  }, [close, goNext, goPrevious, upNext]);
 
   const onLoadedMetadata = () => {
+    switchingRef.current = false;
     const saved = store.get(entry.relativePath);
     const element = videoRef.current;
     if (saved === null || !element) return;
@@ -115,31 +317,19 @@ export default function VideoOverlay({ bridge, entry, onClose, resume }: {
 
   const openExternally = () => void bridge.openMedia(entry.relativePath);
 
+  const note = subtitleNote ? <span role="status">{subtitleNote}</span>
+    : resumedAt !== null ? (
+      <span role="status">Resumed at {formatDuration(resumedAt)}<button type="button" onClick={startOver}>Start over</button></span>
+    ) : null;
+
   return (
     <div ref={overlayRef} className="video-overlay" role="dialog" aria-modal="true" aria-label={`Playing ${title}`}>
       <header className="video-overlay__bar" data-tauri-drag-region>
         <button ref={closeRef} type="button" className="np-round video-overlay__close" aria-label="Close video" onClick={close}><Icon name="close" /></button>
         <h2 className="video-overlay__title" title={title}>{title}</h2>
-        {resumedAt !== null ? (
-          <span className="video-overlay__resume" role="status">
-            Resumed at {formatDuration(resumedAt)}
-            <button type="button" onClick={startOver}>Start over</button>
-          </span>
-        ) : null}
-        {source.kind === "ready" && !failed ? (
-          <button
-            type="button"
-            className={`video-overlay__stable ${stable.enabled ? "is-on" : ""}`}
-            aria-pressed={stable.enabled}
-            title="Stable volume lifts quiet passages and holds peaks, like YouTube. Off plays the original mix."
-            onClick={stable.toggle}
-          >
-            <Icon name="volume" />Stable volume
-          </button>
-        ) : null}
       </header>
       <div className="video-overlay__stage">
-        {source.kind === "checking" ? (
+        {source.kind === "checking" && !playerShownRef.current ? (
           <div className="video-overlay__fallback" role="status" aria-label="Checking video">
             <span className="spinner" aria-hidden="true" />
           </div>
@@ -153,13 +343,11 @@ export default function VideoOverlay({ bridge, entry, onClose, resume }: {
             </span>
             <button type="button" className="btn btn-default" onClick={close}>Cancel</button>
           </div>
-        ) : src && !failed && source.kind === "ready" ? (
+        ) : !failed && (source.kind === "ready" || (source.kind === "checking" && playerShownRef.current)) ? (
+          // While the next video is checked the player stays (with no source),
+          // so full screen and focus are kept.
           <VideoPlayer>
-            <VideoSkin className="video-overlay__skin">
-              <div className="video-skip">
-                <SeekButton seconds={-SKIP_SECONDS} className="video-skip__button" aria-label={`Back ${SKIP_SECONDS} seconds`} title={`Back ${SKIP_SECONDS} seconds (←)`}><SkipIcon /></SeekButton>
-                <SeekButton seconds={SKIP_SECONDS} className="video-skip__button" aria-label={`Forward ${SKIP_SECONDS} seconds`} title={`Forward ${SKIP_SECONDS} seconds (→)`}><SkipIcon forward /></SeekButton>
-              </div>
+            <Container className="vplayer">
               <Video
                 ref={(element: HTMLVideoElement | null) => {
                   videoRef.current = element;
@@ -174,10 +362,41 @@ export default function VideoOverlay({ bridge, entry, onClose, resume }: {
                 onLoadedMetadata={onLoadedMetadata}
                 onTimeUpdate={onTimeUpdate}
                 onPause={save}
-                onEnded={() => store.clear(entry.relativePath)}
+                onEnded={onEnded}
                 onError={() => setFailed(true)}
+              >
+                {bridge.mediaUrl ? subtitles.tracks.map((track, index) => (
+                  <track key={`${entry.relativePath}|${track.id}|${track.url}`} id={track.id} kind="subtitles" src={bridge.mediaUrl!(track.url)} label={subtitleLabels[index]} srcLang={languageTag(track.language) || undefined} />
+                )) : null}
+              </Video>
+              <VideoControls
+                video={videoElement}
+                navigation={navigation ? {
+                  previous: navigation.previous && goPrevious ? { title: mediaTitle(navigation.previous), go: goPrevious } : null,
+                  next: navigation.next && goNext ? { title: mediaTitle(navigation.next), go: goNext } : null,
+                } : undefined}
+                note={note}
+                stable={playable ? { enabled: stable.enabled, toggle: stable.toggle } : null}
+                autoplay={navigation ? { on: autoplay, toggle: toggleAutoplay } : null}
+                subtitles={{
+                  options: subtitleOptions,
+                  choose: chooseSubtitle,
+                  preferred: preferredSubtitle,
+                  add: bridge.addSubtitles ? () => void addSubtitles() : undefined,
+                  unsupported: !subtitles.loading && !subtitles.tracks.length ? subtitles.unsupported : 0,
+                }}
               />
-            </VideoSkin>
+              {upNext !== null && navigation?.next ? (
+                <div className="video-upnext" role="status" aria-label="Up next">
+                  <p>Up next in {upNext}</p>
+                  <strong title={mediaTitle(navigation.next)}>{mediaTitle(navigation.next)}</strong>
+                  <div className="video-upnext__actions">
+                    <button type="button" onClick={() => { setUpNext(null); goNext?.(); }}>Play now</button>
+                    <button type="button" onClick={() => setUpNext(null)}>Cancel</button>
+                  </div>
+                </div>
+              ) : null}
+            </Container>
           </VideoPlayer>
         ) : (
           <div className="video-overlay__fallback">
@@ -190,84 +409,4 @@ export default function VideoOverlay({ bridge, entry, onClose, resume }: {
       </div>
     </div>
   );
-}
-
-/** Whether this webview decodes Dolby Digital (Plus); Windows editions without
- * the Dolby decoder get AC-3/E-AC-3 converted instead. */
-function decodesDolby() {
-  try {
-    const probe = document.createElement("video");
-    return Boolean(probe.canPlayType('audio/mp4; codecs="ec-3"')) && Boolean(probe.canPlayType('audio/mp4; codecs="ac-3"'));
-  } catch {
-    return false;
-  }
-}
-
-type PlayableSource =
-  | { kind: "checking" }
-  | { kind: "ready"; src: string }
-  | { kind: "preparing"; id: string; mode: "remux" | "transcode" | "preparing"; percent: number | null }
-  | { kind: "failed" }
-  | { kind: "unavailable" };
-
-/**
- * The URL the player can play for a library video: the file itself, or a
- * prepared copy for formats the webview can't play as they are (MKV, MOV,
- * AVI, AC-3 audio …). Closing the player stops an unfinished preparation.
- */
-function usePlayableSource(bridge: DesktopBridge, relativePath: string): PlayableSource {
-  const [source, setSource] = useState<PlayableSource>(() => (
-    !bridge.mediaUrl ? { kind: "unavailable" }
-      : bridge.preparePlayback ? { kind: "checking" }
-        : { kind: "ready", src: bridge.mediaUrl(relativePath) }
-  ));
-
-  useEffect(() => {
-    const mediaUrl = bridge.mediaUrl;
-    if (!mediaUrl || !bridge.preparePlayback) return;
-    let active = true;
-    let jobId: string | null = null;
-    let finished = false;
-    let unlisten: (() => void) | null = null;
-    const ready = (url: string) => {
-      finished = true;
-      if (active) setSource({ kind: "ready", src: mediaUrl(url) });
-    };
-    void (async () => {
-      // Listen first so a quick "ready" is never missed.
-      unlisten = (await bridge.subscribePlayback?.((event) => {
-        if (!active || event.id !== jobId) return;
-        if (event.type === "progress") setSource((current) => (current.kind === "preparing" ? { ...current, percent: event.percent } : current));
-        else if (event.type === "ready") ready(event.url);
-        else {
-          finished = true;
-          setSource({ kind: "failed" });
-        }
-      }).catch(() => null)) ?? null;
-      if (!active) {
-        unlisten?.();
-        return;
-      }
-      try {
-        const plan = await bridge.preparePlayback!(relativePath, { dolby: decodesDolby() });
-        if (!active) return;
-        if (plan.kind === "direct") ready(relativePath);
-        else if (plan.kind === "ready") ready(plan.url);
-        else {
-          jobId = plan.id;
-          setSource({ kind: "preparing", id: plan.id, mode: plan.mode, percent: null });
-        }
-      } catch {
-        finished = true;
-        if (active) setSource({ kind: "failed" });
-      }
-    })();
-    return () => {
-      active = false;
-      unlisten?.();
-      if (jobId && !finished) void bridge.cancelPlayback?.(jobId).catch(() => undefined);
-    };
-  }, [bridge, relativePath]);
-
-  return source;
 }

@@ -400,7 +400,7 @@ def test_download_finalizes_atomically_with_collision_safe_name(monkeypatch, tmp
         thumbnail_url="https://images.example.test/poster.jpg",
         formats=(FormatOption("video", "Video", "mp4"),),
     )
-    existing = library.video / "Example_title [media-1].mp4"
+    existing = library.video / "Example_title.mp4"
     existing.write_bytes(b"old")
 
     class FakeYdl:
@@ -422,7 +422,7 @@ def test_download_finalizes_atomically_with_collision_safe_name(monkeypatch, tmp
 
     result = download_media(media, "video", library, lambda _event: None, threading.Event())
 
-    assert result.relative_path == "video/Example_title [media-1] (2).mp4"
+    assert result.relative_path == "video/Example_title (2).mp4"
     assert result.artwork_path == "artwork/poster.jpg"
     assert (library.root / result.relative_path).read_bytes() == b"new media"
     assert list(library.temp.iterdir()) == []
@@ -787,3 +787,48 @@ def test_download_reports_source_blocked_for_http_403(tmp_path: Path):
         patch.setattr(yt_dlp, "YoutubeDL", Blocked)
         with pytest.raises(RuntimeError, match="source_blocked"):
             download_media(media, "video", library, lambda _event: None, threading.Event())
+
+
+def test_clean_stem_is_the_title_made_safe():
+    assert desktop_download.clean_stem("Example/title: part 2?") == "Example_title_ part 2"
+    assert desktop_download.clean_stem("  ..Song..  ") == "Song"
+    assert desktop_download.clean_stem("con") == "con_"
+    assert desktop_download.clean_stem("COM1") == "COM1_"
+    assert desktop_download.clean_stem("???") == "media"
+    long = desktop_download.clean_stem("a" * 119 + " " + "b" * 10)
+    assert long == "a" * 119
+
+
+def test_a_title_used_by_any_saved_media_or_cover_gets_a_number(monkeypatch, tmp_path: Path):
+    library = MediaLibrary.create(tmp_path / "library")
+    (library.audio / "Clip.mp3").write_bytes(b"song")
+    (library.artwork / "clip (2).jpg").write_bytes(b"cover of another item")
+    media = InspectedMedia(
+        source_url="https://www.xvideos.com/video.abc/title",
+        media_id="media-7",
+        title="Clip",
+        site="XVideos",
+        thumbnail_url=None,
+        formats=(FormatOption("video", "Video", "mp4"),),
+    )
+
+    class FakeYdl:
+        def __init__(self, _options):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def download(self, _sources):
+            (library.temp / "Clip [media-7].mp4").write_bytes(b"video")
+            return 0
+
+    monkeypatch.setitem(__import__("sys").modules, "yt_dlp", types.SimpleNamespace(YoutubeDL=FakeYdl))
+
+    result = download_media(media, "video", library, lambda _event: None, threading.Event())
+
+    # Clip is taken by a song and "clip (2)" by a cover (case-insensitive).
+    assert result.relative_path == "video/Clip (3).mp4"

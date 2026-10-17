@@ -175,6 +175,30 @@ pub fn serve_playback(
     serve_path(&cache_dir.join(name), "video/mp4", method, range, MAX_CHUNK)
 }
 
+/// The cache name in a `qtmedia://localhost/subtitles/<16 hex>.vtt` request.
+pub fn subtitle_name(uri_path: &str) -> Option<String> {
+    let relative = percent_decode(uri_path.trim_start_matches('/'))?.replace('\\', "/");
+    let name = relative.strip_prefix("subtitles/")?;
+    crate::subtitles::is_cache_file_name(name).then(|| name.to_owned())
+}
+
+/// Serves a converted subtitle track; only strict names inside `cache_dir`.
+pub fn serve_subtitle(cache_dir: &Path, method: &str, uri_path: &str) -> MediaResponse {
+    if method != "GET" && method != "HEAD" {
+        return MediaResponse::empty(405);
+    }
+    let Some(name) = subtitle_name(uri_path) else {
+        return MediaResponse::empty(404);
+    };
+    serve_path(
+        &cache_dir.join(name),
+        "text/vtt; charset=utf-8",
+        method,
+        None,
+        crate::subtitles::MAX_SUBTITLE_BYTES * 2,
+    )
+}
+
 fn serve_path(
     path: &Path,
     content_type: &str,

@@ -27,7 +27,7 @@ from .models import (
 from .network import new_session as network_session
 from .network import proxy_options
 from .runtime import javascript_runtime_options
-from .song_tags import write_song_tags
+from .song_tags import write_song_tags, write_source_tags
 from .ytdlp_errors import is_source_blocked, is_source_changed
 
 ProgressCallback = Callable[[DownloadProgress], None]
@@ -46,9 +46,41 @@ class DesktopDownloadCancelled(RuntimeError):
     pass
 
 
+# Windows refuses these as file names, with or without an extension.
+RESERVED_STEMS = frozenset(
+    {"con", "prn", "aux", "nul", *(f"com{n}" for n in range(1, 10)), *(f"lpt{n}" for n in range(1, 10))}
+)
+# Saved files of one item share a stem across these folders (covers pair by stem).
+STEM_FOLDERS = ("audio", "video", "artwork")
+_finalize_lock = threading.Lock()
+
+
+def clean_stem(title: str) -> str:
+    """The file name a title is saved under: `Title`, made safe for every OS."""
+    cleaned = INVALID_FILENAME.sub("_", title).strip(" ._")[:120].rstrip(" ._") or "media"
+    return f"{cleaned}_" if cleaned.casefold() in RESERVED_STEMS else cleaned
+
+
 def safe_stem(title: str, media_id: str) -> str:
-    cleaned = INVALID_FILENAME.sub("_", title).strip(" ._") or "media"
-    return f"{cleaned[:120]} [{media_id}]"
+    """The temp stem of one job: the media id keeps concurrent jobs apart."""
+    return f"{clean_stem(title)} [{media_id}]"
+
+
+def _free_stem(library: MediaLibrary, stem: str) -> str:
+    """`stem`, or `stem (2)`… when any saved media, lyrics or cover uses it."""
+    taken = {
+        entry.stem.casefold()
+        for folder in STEM_FOLDERS
+        if (library.root / folder).is_dir()
+        for entry in (library.root / folder).iterdir()
+    }
+    if stem.casefold() not in taken:
+        return stem
+    for index in range(2, 10_000):
+        candidate = f"{stem} ({index})"
+        if candidate.casefold() not in taken:
+            return candidate
+    raise RuntimeError("filename_exhausted")
 
 
 # Postprocessors whose work is worth naming. MoveFiles (a rename) and the
@@ -329,6 +361,16 @@ def download_media(
         selection = media.selection_for(format_key)
         kind = selection.kind
         options = build_download_options(media, format_key, library, progress, cancel)
+        # The audio stream actually fetched (codec/bitrate), for FLAC honesty.
+        stream: dict[str, object] = {}
+
+        def remember_stream(status: dict[str, object]) -> None:
+            info = status.get("info_dict")
+            if isinstance(info, dict) and info.get("acodec") not in (None, "none"):
+                stream["acodec"] = info.get("acodec")
+                stream["abr"] = info.get("abr")
+
+        options["progress_hooks"] = [*options.get("progress_hooks", []), remember_stream]
         source = media.download_url or media.source_url
         try:
             with yt_dlp.YoutubeDL(options) as ydl:
@@ -358,8 +400,13 @@ def download_media(
         if not candidates or candidates[0].is_symlink() or candidates[0].stat().st_size == 0:
             raise RuntimeError("output_missing")
         target_root = library.audio if kind == "audio" else library.video
-        destination = _collision_safe(target_root / f"{stem}.{extension}")
-        os.replace(candidates[0], destination)
+        with _finalize_lock:
+            destination = target_root / f"{_free_stem(library, clean_stem(media.title))}.{extension}"
+            os.replace(candidates[0], destination)
+        if kind == "audio" and stream:
+            # Best effort, like tags: a FLAC from a lossy stream says so.
+            with contextlib.suppress(Exception):
+                write_source_tags(destination, stream.get("acodec"), stream.get("abr"))
         if kind == "audio" and not media.tags.is_empty():
             # Only real music metadata is written (never a guessed artist).
             # Tags are best effort, like artwork: a failure keeps the file.

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 
 import "./app.css";
 import { FilesPage } from "./components/FilesPage";
@@ -10,7 +10,8 @@ import { Sidebar, type Route } from "./components/Shell";
 import { detectDesktopPlatform, WindowControls } from "./components/WindowControls";
 import { DesktopSessionProvider, useDesktopSession } from "./lib/DesktopSession";
 import { desktopBridge, type DesktopBridge, type LibraryEntry } from "./lib/bridge";
-import { PlayerProvider, usePlayer } from "./lib/player";
+import { PlayerProvider, usePlayer, usePlayerShortcuts } from "./lib/player";
+import { applyRenames } from "./lib/renames";
 
 // Video.js loads only when a video is opened.
 const VideoOverlay = lazy(() => import("./components/VideoOverlay"));
@@ -31,13 +32,37 @@ function AppShell({ bridge }: { bridge: DesktopBridge }) {
   const player = usePlayer();
   const platform = detectDesktopPlatform();
   const goHome = () => setRoute("home");
-  const [video, setVideo] = useState<LibraryEntry | null>(null);
+  // The opened video and the list it was opened from (array + index, like the music queue).
+  const [videos, setVideos] = useState<{ list: LibraryEntry[]; index: number } | null>(null);
+  const video = videos ? videos.list[videos.index] ?? null : null;
+  // Playlists and resume positions follow files renamed to clean names, even
+  // before a library page is opened.
+  useEffect(() => {
+    void bridge.libraryRenames?.().then(applyRenames, () => undefined);
+  }, [bridge, libraryRevision]);
+  usePlayerShortcuts(player, !video);
   const showPlayerBar = player.available && (Boolean(player.current) || route === "music");
-  const playVideo = (entry: LibraryEntry) => {
+  const playVideo = (entry: LibraryEntry, list: LibraryEntry[] = [entry]) => {
     // Pauses music and frees the audio device (exclusive mode would block video sound).
     player.releaseDevice();
-    setVideo(entry);
+    const index = list.findIndex((item) => item.relativePath === entry.relativePath);
+    setVideos(index >= 0 ? { list, index } : { list: [entry], index: 0 });
   };
+  const navigation = useMemo(() => {
+    if (!videos || videos.list.length < 2) return undefined;
+    const { list, index } = videos;
+    const step = (by: number) => setVideos((current) => {
+      if (!current) return current;
+      const target = current.index + by;
+      return target >= 0 && target < current.list.length ? { ...current, index: target } : current;
+    });
+    return {
+      previous: list[index - 1] ?? null,
+      next: list[index + 1] ?? null,
+      onPrevious: () => step(-1),
+      onNext: () => step(1),
+    };
+  }, [videos]);
   return (
     <div className={`app-shell platform-${platform}`}>
       <Sidebar active={route} onNavigate={setRoute} />
@@ -56,7 +81,7 @@ function AppShell({ bridge }: { bridge: DesktopBridge }) {
       <NowPlaying bridge={bridge} />
       {video ? (
         <Suspense fallback={<div className="video-overlay video-overlay--loading" role="status" aria-label="Loading player" />}>
-          <VideoOverlay key={video.relativePath} bridge={bridge} entry={video} onClose={() => setVideo(null)} />
+          <VideoOverlay bridge={bridge} entry={video} navigation={navigation} onClose={() => setVideos(null)} />
         </Suspense>
       ) : null}
     </div>
