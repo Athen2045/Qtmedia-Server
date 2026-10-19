@@ -778,3 +778,30 @@ option:disabled { color: var(--text-3); }
 .sort-menu select:hover { background: var(--hover); color: var(--text); }
 .sort-menu select::picker-icon { display: none; }
 .row-select { max-width: 240px; }
+
+/* ---------- Private folder (encrypted vault) ---------- */
+.vault-tile { display: flex; align-items: center; gap: 12px; width: min(360px, 100%); margin-bottom: 22px; padding: 12px 14px; border: 0; border-radius: 10px; background: var(--field); box-shadow: inset 0 0 0 1px var(--sep); color: var(--text); text-align: left; transition: background 120ms var(--ease); }
+.vault-tile:hover, .vault-tile:focus-visible { outline: 0; background: var(--control); }
+.vault-tile > svg { width: 14px; height: 14px; margin-left: auto; color: var(--text-3); rotate: -90deg; }
+.vault-tile__icon, .vault-gate__icon { display: grid; flex: none; width: 36px; height: 36px; place-items: center; border-radius: 50%; background: var(--accent-soft); color: var(--accent-hover); }
+.vault-tile__icon svg, .vault-gate__icon svg { width: 18px; height: 18px; }
+.vault-tile__copy { display: grid; gap: 2px; }
+.vault-tile__copy strong { font-size: 13.5px; font-weight: 600; }
+.vault-tile__copy span { color: var(--text-3); font-size: 12px; }
+.vault-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 18px; }
+.vault-head__title { display: inline-flex; align-items: center; gap: 7px; font: 600 17px/1.2 var(--display); }
+.vault-head__title svg { width: 16px; height: 16px; color: var(--accent-hover); }
+.vault-head__actions { display: flex; gap: 8px; margin-left: auto; }
+.vault-gate { display: grid; justify-items: stretch; gap: 10px; width: min(360px, 100%); margin: 48px auto 0; text-align: center; }
+.vault-gate__icon { justify-self: center; width: 46px; height: 46px; }
+.vault-gate h2 { font: 600 16px/1.3 var(--display); }
+.vault-gate p { color: var(--text-2); font-size: 12.5px; }
+.vault-gate .vault-gate__warning { color: #ffb340; }
+.vault-gate .btn { height: 32px; }
+.vault-card__meta { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.vault-card__meta .media-meta { flex: 1; }
+.vault-progress { display: grid; gap: 10px; margin: 0 0 20px; padding: 0; list-style: none; }
+.vault-progress li { display: grid; grid-template-columns: minmax(0, 1fr) 160px 130px; align-items: center; gap: 12px; font-size: 12.5px; }
+.vault-progress li > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vault-progress .meter { width: 100%; }
+.vault-progress__stage { color: var(--text-3); }

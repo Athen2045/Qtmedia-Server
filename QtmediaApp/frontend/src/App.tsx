@@ -41,6 +41,15 @@ function AppShell({ bridge }: { bridge: DesktopBridge }) {
     void bridge.libraryRenames?.().then(applyRenames, () => undefined);
   }, [bridge, libraryRevision]);
   usePlayerShortcuts(player, !video);
+  // The Private folder locked (idle, library switch): stop any private video.
+  useEffect(() => {
+    let stop: (() => void) | null = null;
+    let active = true;
+    void bridge.vault?.subscribe((event) => {
+      if (event.type === "locked") setVideos((current) => (current && current.list[current.index]?.relativePath.startsWith("vault/") ? null : current));
+    }).then((unlisten) => { if (active) stop = unlisten; else unlisten(); }).catch(() => undefined);
+    return () => { active = false; stop?.(); };
+  }, [bridge]);
   const showPlayerBar = player.available && (Boolean(player.current) || route === "music");
   const playVideo = (entry: LibraryEntry, list: LibraryEntry[] = [entry]) => {
     // Pauses music and frees the audio device (exclusive mode would block video sound).

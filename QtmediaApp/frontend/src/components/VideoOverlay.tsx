@@ -403,7 +403,8 @@ export default function VideoOverlay({ bridge, entry, onClose, resume, navigatio
             <p role={failed ? "alert" : undefined}>
               {failed || source.kind === "failed" ? "This video can't be played here." : "Built-in playback isn't available here."}
             </p>
-            <button type="button" className="btn btn-default" onClick={openExternally}><Icon name="open" />Open in default player</button>
+            {/* A Private folder video is encrypted on disk: no other player can open it. */}
+            {entry.relativePath.startsWith("vault/") ? null : <button type="button" className="btn btn-default" onClick={openExternally}><Icon name="open" />Open in default player</button>}
           </div>
         )}
       </div>

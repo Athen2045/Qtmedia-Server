@@ -80,9 +80,18 @@ def _height(item: dict[str, object]) -> int | None:
     return None
 
 
+VIDEO_EXTENSIONS = frozenset({"mp4", "m4v", "webm", "mkv", "mov", "flv"})
+
+
 def _has_video(item: dict[str, object]) -> bool:
     vcodec = item.get("vcodec")
-    return vcodec != "none" and (vcodec is not None or _height(item) is not None)
+    if vcodec == "none":
+        return False
+    if vcodec is not None or _height(item) is not None:
+        return True
+    # A plain file with no codec or size details at all (the Txxx network's
+    # "hq.mp4") is an ordinary muxed video.
+    return item.get("acodec") is None and item.get("ext") in VIDEO_EXTENSIONS
 
 
 def _has_audio(item: dict[str, object]) -> bool:
@@ -243,7 +252,10 @@ def _available_formats(
         option = FormatOption(key, f"{height}p MP4", "mp4", "video", height, None)
         available.append(option)
         selections[key] = FormatSelection(key, "video", _selector(item, "video", height, best_audio), "mp4")
-    if None in by_height:
+    # A file of unknown quality is offered only when nothing else is: next to
+    # labelled heights it is a duplicate the user cannot judge (XNXX's
+    # "low"/"high" files beside its 250p-1080p streams).
+    if None in by_height and len(by_height) == 1:
         item = by_height[None]
         key = _new_key(used_keys)
         option = FormatOption(key, "Video MP4", "mp4", "video", None, None)

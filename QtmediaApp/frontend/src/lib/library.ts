@@ -15,6 +15,7 @@ export function fileName(entry: LibraryEntry) {
 
 /** File name without its extension, for media titles in Video and Music. */
 export function mediaTitle(entry: LibraryEntry) {
+  if (entry.title) return entry.title;
   const name = fileName(entry);
   const dot = name.lastIndexOf(".");
   return dot > 0 ? name.slice(0, dot) : name;

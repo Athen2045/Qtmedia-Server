@@ -10,6 +10,7 @@ import { EmptyState } from "./FilesPage";
 import { Icon } from "./Icon";
 import { AddToPlaylist, PlaylistSheet, PlaylistShelf, PlaylistView } from "./Playlists";
 import { Toolbar } from "./Shell";
+import { VaultView } from "./VaultView";
 
 type Sort = "recent" | "name";
 
@@ -94,6 +95,18 @@ export function VideoPage({ bridge, refreshToken = 0, onGoHome, onShowDownload, 
     };
   }, [saved]);
   const play = (entry: LibraryEntry, list: LibraryEntry[]) => (onPlayVideo ? onPlayVideo(entry, list) : void bridge.openMedia(entry.relativePath));
+  const [vaultOpen, setVaultOpen] = useState(false);
+  if (vaultOpen && bridge.vault) {
+    return (
+      <section className="page media-page" aria-labelledby="video-title">
+        <Toolbar title="Video" onShowDownload={onShowDownload} />
+        <span id="video-title" className="sr-only">Video</span>
+        <div className="page-body">
+          <VaultView bridge={bridge} libraryVideos={items} onBack={() => setVaultOpen(false)} onPlayVideo={onPlayVideo} onLibraryChanged={retry} />
+        </div>
+      </section>
+    );
+  }
   return (
     <section className="page media-page" aria-labelledby="video-title">
       <Toolbar title="Video" badge={onPlayVideo ? undefined : "Player coming soon"} onShowDownload={onShowDownload}>
@@ -102,6 +115,13 @@ export function VideoPage({ bridge, refreshToken = 0, onGoHome, onShowDownload, 
       </Toolbar>
       <span id="video-title" className="sr-only">Video</span>
       <div className="page-body">
+        {bridge.vault && !failed ? (
+          <button type="button" className="vault-tile" onClick={() => setVaultOpen(true)}>
+            <span className="vault-tile__icon" aria-hidden="true"><Icon name="lock" /></span>
+            <span className="vault-tile__copy"><strong>Private</strong><span>Encrypted, password protected</span></span>
+            <Icon name="chevron" />
+          </button>
+        ) : null}
         <ListStates loading={loading} failed={failed} retry={retry} empty={items.length === 0} kind="video" onGoHome={onGoHome} />
         {!failed && items.length ? (
           <ul className="video-grid" aria-label="All videos">

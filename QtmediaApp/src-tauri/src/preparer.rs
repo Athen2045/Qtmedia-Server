@@ -163,6 +163,11 @@ impl Preparer {
         })
     }
 
+    /// Whether the job `id` (from `Prepared::Preparing`) is still running.
+    pub fn is_running(&self, id: &str) -> bool {
+        self.running_mode(id).is_some()
+    }
+
     fn running_mode(&self, name: &str) -> Option<&'static str> {
         self.jobs
             .lock()

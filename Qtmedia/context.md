@@ -1,6 +1,6 @@
 # Qtmedia CLI Context Snapshot
 
-**Verified:** 2026-10-11
+**Verified:** 2026-10-18
 **Current phase:** Standalone CLI maintenance and desktop sidecar integration.
 
 ## Completed
@@ -79,6 +79,31 @@
   passed (1 known `.env` failure), Ruff, compileall clean. Files:
   `desktop_service/{browser_cookies,adapters,inspection,download}.py`,
   `tests/test_browser_cookies.py`.
+
+- 2026-10-18: Adapter batch from yt-dlp's supported list.
+  Desktop allowlist (`desktop_service/adapters.py`): XNXX, RedTube, RedGifs,
+  EMPFlix, MovieFap, ThisVid, and the Txxx network (HClips, HDZog, HotMovs,
+  InPorn, PrivateHomeClips, TubePornClassic, Txxx, Upornia, VJAV, VXXX,
+  VoyeurHit; `.tube` mirrors via the new `DesktopAdapter.aliases`). CLI
+  search (`search/engine.py`): XNXX, RedTube, EMPFlix, MovieFap, ThisVid
+  (each returned 20 clean results live); RedGifs and Txxx sites render with
+  JavaScript, so they are direct-link only. Inspection now treats a format
+  with no codec, height or audio details but a video extension as a muxed
+  video (Txxx's only format, `hq.mp4`), offered as "Video MP4" only when no
+  labelled height exists (hides XNXX's duplicate low/high files).
+  Not added, broken in yt-dlp 2026.08.19 and nightly 2026.10.10: Beeg (API
+  no longer returns streams; site IDs also carry a "-0" prefix the API
+  rejects), Rule34Video (download-link markup changed; links need the page
+  session), 4tube/PornTube/PornerBros/Fux (site moved to a JS app; Cloudflare
+  challenges Chrome fingerprints but not Firefox).
+  Live on the user's VPN: all 23 domains inspect; downloads verified for
+  RedGifs, XNXX, EMPFlix, MovieFap, ThisVid, HClips (H.264/AAC, full
+  durations, files deleted). RedTube (and existing YouPorn) media URLs answer
+  410 Gone on this VPN (Aylo CDN rejects the signed links; time window is
+  valid), and yt-dlp then skips every HLS fragment for minutes before
+  "downloaded file is empty". pytest 233 passed (1 known `.env`), Ruff,
+  compileall clean. Files: `desktop_service/{adapters,inspection}.py`,
+  `search/engine.py`, `tests/test_{desktop_service,downloader,search}.py`.
 
 ## Next concrete action
 

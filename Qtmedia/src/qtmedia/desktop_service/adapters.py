@@ -20,13 +20,15 @@ class DesktopAdapter:
     excluded_path: re.Pattern[str] | None = None
     # curl_cffi fingerprint for sites that reject a plain TLS client.
     impersonate: str | None = None
+    # Other domains serving the same site and URL shapes (e.g. "txxx.tube").
+    aliases: tuple[str, ...] = ()
     # Use the user's Firefox cookies when they opt in (browser_cookies.py).
     # Only for sites whose Cloudflare challenge blocks some networks outright.
     browser_cookies: bool = False
 
     def matches_host(self, host: str) -> bool:
         host = host.casefold().rstrip(".").removeprefix("www.")
-        return host == self.domain or host.endswith(f".{self.domain}")
+        return any(host == domain or host.endswith(f".{domain}") for domain in (self.domain, *self.aliases))
 
     def is_video_path(self, path: str) -> bool:
         if self.excluded_path and self.excluded_path.search(path):
@@ -55,6 +57,37 @@ DESKTOP_ADAPTERS: tuple[DesktopAdapter, ...] = (
     # yt-dlp's NoodleMagazine extractor accepts /watch/<owner>_<id>, where the
     # owner ID may be negative (VK-style IDs, e.g. /watch/-226552677_456244963).
     DesktopAdapter("NoodleMagazine", "noodlemagazine.com", re.compile(r"^/watch/-?\d+_\d+$")),
+    # XNXX shares XVideos' infrastructure; yt-dlp wants /video-<id>/<slug>.
+    DesktopAdapter("XNXX", "xnxx.com", re.compile(r"^/video-[0-9a-z]+(?:/|$)")),
+    DesktopAdapter("RedTube", "redtube.com", re.compile(r"^/\d+$")),
+    # Clips are /watch/<id> pages; /ifr/<id> is the embed player.
+    DesktopAdapter("RedGifs", "redgifs.com", re.compile(r"^/(?:watch|ifr)/[A-Za-z0-9]+$")),
+    # EMPFlix and MovieFap are TNAFlix's network, each with its own URL shape.
+    DesktopAdapter("EMPFlix", "empflix.com", re.compile(r"^/(?:videos/.+-|[^/]+/[^/]+/video)\d+$")),
+    DesktopAdapter("MovieFap", "moviefap.com", re.compile(r"^/videos/[0-9a-f]+/[^/]+\.html$")),
+    DesktopAdapter("ThisVid", "thisvid.com", re.compile(r"^/videos/[A-Za-z0-9-]+$")),
+    # yt-dlp's Txxx extractor covers this network: /video(s)/<id>/<slug> or
+    # /video-<id>/, several sites also on a ".tube" domain.
+    *(
+        DesktopAdapter(name, domain, re.compile(r"^/videos?[/-]\d+(?:/|$)"), aliases=aliases)
+        for name, domain, aliases in (
+            ("HClips", "hclips.com", ()),
+            ("HDZog", "hdzog.com", ("hdzog.tube",)),
+            ("HotMovs", "hotmovs.com", ("hotmovs.tube",)),
+            ("InPorn", "inporn.com", ()),
+            ("PrivateHomeClips", "privatehomeclips.com", ()),
+            ("TubePornClassic", "tubepornclassic.com", ()),
+            ("Txxx", "txxx.com", ("txxx.tube",)),
+            ("Upornia", "upornia.com", ("upornia.tube",)),
+            ("VJAV", "vjav.com", ("vjav.tube",)),
+            ("VXXX", "vxxx.com", ()),
+            ("VoyeurHit", "voyeurhit.com", ("voyeurhit.tube",)),
+        )
+    ),
+    # Not listed while yt-dlp's extractors are broken (checked 2026-10-18,
+    # also on nightly 2026.10.10): Beeg (its API no longer returns streams),
+    # Rule34Video (download-link markup changed), 4tube/PornTube/PornerBros/Fux
+    # (moved to a JavaScript app).
 )
 
 

@@ -81,7 +81,7 @@ impl AppState {
         self.snapshot().map(|(sidecar, _)| sidecar)
     }
 
-    fn ensure_not_switching(&self) -> Result<(), StableError> {
+    pub fn ensure_not_switching(&self) -> Result<(), StableError> {
         (!self.switching.load(Ordering::Acquire))
             .then_some(())
             .ok_or(StableError::StorageBusy)
@@ -647,6 +647,12 @@ async fn switch_library(
     preference: LibraryPreference,
 ) -> Result<LibraryLocation, StableError> {
     crate::paths::prepare_library(&root)?;
+    // Another library: its Private folder starts locked.
+    if let Some(session) = app.try_state::<Arc<crate::vault_commands::VaultSession>>() {
+        if session.lock() {
+            let _ = app.emit("vault-locked", json!({ "reason": "library" }));
+        }
+    }
     let cache_dir = app
         .try_state::<Arc<crate::preparer::Preparer>>()
         .map(|preparer| preparer.cache_dir().to_path_buf());

@@ -207,8 +207,10 @@ pub fn make_cover(
         return None;
     }
     let destination = root.join("artwork").join(format!("{stem}.jpg"));
-    // Never replace a cover that appeared meanwhile.
-    if destination.exists() || fs::rename(&part, &destination).is_err() {
+    // Never replace a cover that appeared meanwhile, and never leave one for
+    // a video that went away while ffmpeg ran (moved to the Private folder,
+    // deleted): it would be a readable frame named after it.
+    if destination.exists() || !video.is_file() || fs::rename(&part, &destination).is_err() {
         let _ = fs::remove_file(&part);
         return None;
     }
