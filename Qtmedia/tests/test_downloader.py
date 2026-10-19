@@ -214,3 +214,13 @@ def test_spankbang_mirror_helpers():
 def test_direct_url_validation_noodlemagazine():
     assert is_direct_video_url("https://noodlemagazine.com/watch/-226552677_456244963")
     assert not is_direct_video_url("https://noodlemagazine.com/video/pmv")
+
+
+def test_direct_url_validation_new_cli_search_sites():
+    assert is_direct_video_url("https://www.xnxx.com/video-1cbavz1b/the_best_pmv_ever_created")
+    assert is_direct_video_url("https://www.xnxx.com/video-1cbavz1b/")
+    assert not is_direct_video_url("https://www.xnxx.com/search/pmv")
+    assert is_direct_video_url("https://www.redtube.com/267756101")
+    assert not is_direct_video_url("https://www.redtube.com/?search=pmv")
+    assert is_direct_video_url("https://thisvid.com/videos/pissing-in-the-open3/")
+    assert not is_direct_video_url("https://thisvid.com/search/?q=pmv")

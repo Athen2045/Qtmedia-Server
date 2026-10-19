@@ -206,14 +206,67 @@ fn serve_path(
     range: Option<&str>,
     limit: u64,
 ) -> MediaResponse {
-    let limit = limit.max(1);
     let Ok(mut file) = File::open(path) else {
         return MediaResponse::empty(404);
     };
     let Ok(len) = file.metadata().map(|metadata| metadata.len()) else {
         return MediaResponse::empty(404);
     };
+    serve_bytes(len, content_type, method, range, limit, |start, count| {
+        let mut body = vec![0; count as usize];
+        (file.seek(SeekFrom::Start(start)).is_ok() && file.read_exact(&mut body).is_ok())
+            .then_some(body)
+    })
+}
 
+/// The `(id, extension)` in a `qtmedia://localhost/vault/<32 hex>.<ext>` request.
+pub fn vault_request(uri_path: &str) -> Option<(String, String)> {
+    let relative = percent_decode(uri_path.trim_start_matches('/'))?.replace('\\', "/");
+    let name = relative.strip_prefix("vault/")?;
+    let (id, extension) = name.split_once('.')?;
+    let extension = extension.to_ascii_lowercase();
+    (crate::vault::is_id(id) && ["mp4", "m4v", "webm"].contains(&extension.as_str()))
+        .then(|| (id.to_owned(), extension))
+}
+
+/// Streams a decrypted vault video with byte ranges (only the chunks a
+/// range covers are decrypted).
+pub fn serve_vault(
+    mut reader: crate::vault::VaultReader,
+    extension: &str,
+    method: &str,
+    range: Option<&str>,
+) -> MediaResponse {
+    if method != "GET" && method != "HEAD" {
+        return MediaResponse::empty(405);
+    }
+    let content_type = if extension == "webm" {
+        "video/webm"
+    } else {
+        "video/mp4"
+    };
+    let len = reader.len();
+    serve_bytes(
+        len,
+        content_type,
+        method,
+        range,
+        MAX_CHUNK,
+        |start, count| reader.read_range(start, start + count).ok(),
+    )
+}
+
+/// Range handling shared by files and vault videos: `read(start, count)`
+/// returns exactly those bytes.
+fn serve_bytes(
+    len: u64,
+    content_type: &str,
+    method: &str,
+    range: Option<&str>,
+    limit: u64,
+    read: impl FnOnce(u64, u64) -> Option<Vec<u8>>,
+) -> MediaResponse {
+    let limit = limit.max(1);
     let mut headers = vec![
         ("Content-Type", content_type.to_string()),
         ("Accept-Ranges", "bytes".to_string()),
@@ -250,13 +303,12 @@ fn serve_path(
             body: Vec::new(),
         };
     }
-    let mut body = vec![0; count as usize];
-    if file.seek(SeekFrom::Start(start)).is_err() || file.read_exact(&mut body).is_err() {
-        return MediaResponse::empty(500);
-    }
-    MediaResponse {
-        status,
-        headers,
-        body,
+    match read(start, count) {
+        Some(body) if body.len() as u64 == count => MediaResponse {
+            status,
+            headers,
+            body,
+        },
+        _ => MediaResponse::empty(500),
     }
 }

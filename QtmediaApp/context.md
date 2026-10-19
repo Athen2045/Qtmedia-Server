@@ -231,6 +231,89 @@ Now Playing, video player) at 680x460, 720x520, 960x540, 1920x1080 and
   app; the new minimum applies after restarting `desktop:dev`.
 - **Blockers:** none.
 
+## 2026-10-19 Bug review: Private folder fixes
+
+User asked for a check for bugs. Five confirmed and fixed:
+1. **Vault index lost updates (data loss):** `Vault::add` loaded the index
+   before minutes of encryption and saved its stale copy; parallel moves or
+   a delete/restore during one dropped items (encrypted file kept, original
+   deleted, item gone). `vault.rs` now has a process-wide `INDEX_LOCK`;
+   add encrypts first, then reloads + saves under the lock; restore (whole)
+   and delete run under it (`remove_item`). Test: 8 parallel moves + a
+   delete keep exactly the right items.
+2. **Missed move events:** `VaultView` re-subscribed on every library
+   reload (new `retry`/`titles` each time; async listen gap), so the next
+   video's `added` could be lost (row stuck on Encrypting). One listener
+   per vault now, latest values via refs. Test: rerenders keep one
+   subscription and still handle events.
+3. **Originals in use silently kept:** deletion errors were ignored; on
+   Windows an open file (cover grab, conversion, other player) stays.
+   `remove_with_retry` (~2 s) and `vault-added.originalKept` → notice to
+   delete it from Files. Windows test holds a file without delete sharing.
+4. **Cover race:** the cover job saved `artwork/<title>.jpg` even if the
+   video was moved/deleted while ffmpeg ran; it now re-checks the video.
+5. **Private video fallback:** the player offered "Open in default
+   player" for encrypted files; hidden for `vault/` paths.
+- Minor, left as is: no cancel for a running move; a move fails if the
+  same video's preparation is cancelled by closing the player on it; the
+  subtitle cache is never pruned and holds subtitle text of moved videos;
+  a saved device that is a Hands-Free endpoint shows as "Disconnected"
+  (playback still redirects); `durations` holds its cache lock while
+  measuring.
+- **Verified:** Rust all passing (vault 9), Vitest 197, fmt, `tsc -b`,
+  `git diff --check`; installer rebuilt and installed, app starts.
+
+## 2026-10-19 Private folder (encrypted video vault)
+
+User asked for a password-protected folder in the Video player; chose an
+encrypted vault that locks on close or after 10 minutes idle. Spec:
+`docs/superpowers/specs/2026-10-19-private-video-vault-design.md`.
+- **Dependencies (new, exact pins):** `aes-gcm =0.10.3`, `argon2 =0.5.3`,
+  `zeroize =1.8.1` (RustCrypto; lockfile updated).
+- **`src-tauri/src/vault.rs` (new):** `<library>/vault/` — `vault.json`
+  (Argon2id 64 MiB/3/1 + salt, data key wrapped with AES-256-GCM),
+  `index.qv` (encrypted item list), `<32 hex>.qv` videos and `.cover`s in
+  64 KiB AES-256-GCM chunks (nonce = prefix ‖ index, header as AAD:
+  reorder/truncate/tamper fail). `VaultReader::read_range` decrypts only
+  the chunks a range needs. create/unlock/change_password (re-wrap only),
+  add/restore (free name, cover back to artwork)/delete. Timestamps whole
+  seconds (serde_json float round trip is not exact; a test was flaky).
+- **`src-tauri/src/vault_commands.rs` (new):** `VaultSession` (key in
+  memory, per library; `lock_if_idle`), auto-lock thread (20 s checks, 10
+  min idle → `vault-locked`), lock on library switch (`commands.rs`).
+  Commands `vault_status/create/unlock/lock/change_password/items/cover/
+  restore/delete/add`. `vault_add` job: make playable via the preparer
+  (direct, prepared copy, or wait for conversion; `Preparer::is_running`
+  added), encrypt video + cover, then delete the original, cover,
+  subtitle files and prepared copy permanently (not Recycle Bin); events
+  `vault-progress/added/failed/done`.
+- **Streaming:** `media.rs` `serve_bytes` (shared range logic; `serve_path`
+  now uses it), `vault_request` (strict `vault/<32 hex>.mp4|m4v|webm`),
+  `serve_vault`; `lib.rs` route serves only while unlocked (403 locked).
+- **UI:** Video page "Private" tile → `components/VaultView.tsx` (create
+  with confirm + no-recovery warning, unlock, grid with decrypted covers,
+  Add videos sheet with "removed for good" note, live progress, move back
+  to library, delete-for-good confirm, change password, Lock; returns to
+  the unlock form on `vault-locked`). Vault items play in the normal
+  player as `vault/<id>.<ext>` (`LibraryEntry.title`, `mediaTitle` uses
+  it; `playableSource` streams vault paths directly). `App.tsx` closes a
+  playing vault video on lock. CSS "Private folder" section in `app.css`.
+- **Live (installed build, generated 12 s test clip, removed after):**
+  create → move in 0.5 s (title, duration, cover kept; original and cover
+  gone; vault files have no title or `ftyp` text) → plays from the vault
+  with seeking → Lock → list refused (`vault_locked`), `<video>` load
+  fails → wrong password message → unlock → restore (H.264/AAC 12 s
+  intact, cover back). Test vault, clip and resume key deleted; the
+  user's library has no vault until they create one. Not exercised live:
+  the 10-minute idle lock (unit-tested) and a large file / conversion
+  path.
+- **Tests:** Rust vault 7 (passwords, nothing readable on disk, ranges,
+  tamper/truncate/swap/wrong key, restore/delete, session idle lock,
+  streaming + strict names), media 9 still pass, full suite passing;
+  Vitest 195 (VaultView 5); fmt, `tsc -b`, `git diff --check` clean.
+- **Limits (stated in spec):** no subtitles inside the vault; deleted
+  plaintext may physically remain on SSDs; forgotten password = loss.
+
 ## 2026-10-17 Surround downmix, lossy-source label, loudness levelling
 
 - **Downmix (`convert.rs`):** `stereo_downmix` for 3–8 channels in FLAC/WAVE

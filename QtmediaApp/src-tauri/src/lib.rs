@@ -16,6 +16,8 @@ pub mod removal;
 pub mod settings;
 pub mod sidecar;
 pub mod subtitles;
+pub mod vault;
+pub mod vault_commands;
 
 use std::sync::Arc;
 
@@ -52,6 +54,33 @@ pub fn run() {
                             range.as_deref(),
                         )
                     })
+                });
+                // Private folder videos: decrypted per range, only while unlocked.
+                let playback = playback.or_else(|| {
+                    let (id, extension) = media::vault_request(request.uri().path())?;
+                    let root = app.try_state::<commands::AppState>()?.library_root().ok()?;
+                    let session = app.try_state::<Arc<vault_commands::VaultSession>>()?;
+                    let served = match session.key_for(&root) {
+                        Some(key) => match vault::Vault::of_library(&root).reader(&key, &id) {
+                            Ok(reader) => media::serve_vault(
+                                reader,
+                                &extension,
+                                request.method().as_str(),
+                                range.as_deref(),
+                            ),
+                            Err(_) => media::MediaResponse {
+                                status: 404,
+                                headers: Vec::new(),
+                                body: Vec::new(),
+                            },
+                        },
+                        None => media::MediaResponse {
+                            status: 403,
+                            headers: Vec::new(),
+                            body: Vec::new(),
+                        },
+                    };
+                    Some(served)
                 });
                 let playback = playback.or_else(|| {
                     media::subtitle_name(request.uri().path()).and_then(|_| {
@@ -130,6 +159,9 @@ pub fn run() {
                     .unwrap_or_default()
             };
             app.manage(Arc::new(covers::CoverJobs::default()));
+            // Private folder: the key lives only in memory; idle locks it.
+            app.manage(Arc::new(vault_commands::VaultSession::default()));
+            vault_commands::start_auto_lock(app.handle().clone());
             app.manage(subtitles::SubtitleCache(
                 app.path().app_local_data_dir()?.join("subtitle-cache"),
             ));
@@ -200,6 +232,16 @@ pub fn run() {
             commands::import_media,
             commands::cancel_playback,
             commands::read_subtitles,
+            vault_commands::vault_status,
+            vault_commands::vault_create,
+            vault_commands::vault_unlock,
+            vault_commands::vault_lock,
+            vault_commands::vault_change_password,
+            vault_commands::vault_items,
+            vault_commands::vault_cover,
+            vault_commands::vault_restore,
+            vault_commands::vault_delete,
+            vault_commands::vault_add,
             commands::add_subtitles,
             commands::window_close,
             audio_commands::audio_play,

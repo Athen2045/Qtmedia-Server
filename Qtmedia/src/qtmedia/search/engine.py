@@ -212,6 +212,11 @@ ADAPTERS = [
         result_container_id="list_videos",
         title_selector="[data-video-title-text]",
     ),
+    SiteAdapter("XNXX", "https://www.xnxx.com/search/{query}", r"^/video-[0-9a-z]+(?:/|$)"),
+    SiteAdapter("RedTube", "https://www.redtube.com/?search={query}", r"^/\d+$"),
+    SiteAdapter("EMPFlix", "https://www.empflix.com/search?what={query}", r"^/(?:videos/.+-|[^/]+/[^/]+/video)\d+$"),
+    SiteAdapter("MovieFap", "https://www.moviefap.com/search/{query}/", r"^/videos/[0-9a-f]+/[^/]+\.html$"),
+    SiteAdapter("ThisVid", "https://thisvid.com/search/?q={query}", r"^/videos/[A-Za-z0-9-]+/?$"),
 ]
 
 

@@ -460,3 +460,13 @@ def test_noodlemagazine_reads_card_titles_and_skips_recently_watched_links():
     assert adapter.make_search_urls("bridgette b pmv") == (
         "https://noodlemagazine.com/video/bridgette+b+pmv",
     )
+
+
+def test_new_search_adapters_build_their_search_urls():
+    adapters = {adapter.name: adapter for adapter in ADAPTERS}
+
+    assert adapters["XNXX"].make_search_urls("bridgette b pmv") == ("https://www.xnxx.com/search/bridgette+b+pmv",)
+    assert adapters["RedTube"].make_search_urls("bridgette b") == ("https://www.redtube.com/?search=bridgette+b",)
+    assert adapters["EMPFlix"].make_search_urls("pmv") == ("https://www.empflix.com/search?what=pmv",)
+    assert adapters["MovieFap"].make_search_urls("pmv") == ("https://www.moviefap.com/search/pmv/",)
+    assert adapters["ThisVid"].make_search_urls("pmv") == ("https://thisvid.com/search/?q=pmv",)

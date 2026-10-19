@@ -35,6 +35,10 @@ url = "=2.5.8"
 rubato = "=5.0.0"
 # Native audio engine: lock-free decoder → render ring buffer.
 rtrb = "=0.4.0"
+# Private folder: AES-256-GCM vault, Argon2id password key, zeroed key memory.
+aes-gcm = "=0.10.3"
+argon2 = "=0.5.3"
+zeroize = "=1.8.1"
 
 [target.'cfg(windows)'.dependencies]
 # Native audio engine output (WASAPI shared and exclusive).

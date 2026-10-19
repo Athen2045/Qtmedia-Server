@@ -25,7 +25,32 @@ export type LibraryEntry = {
   modifiedAt: number;
   durationSeconds: number | null;
   artworkPath: string | null;
+  /** Shown instead of the file name (Private folder videos have random names). */
+  title?: string;
 };
+
+/** A video in the Private folder (from the encrypted index). */
+export type VaultItem = {
+  id: string;
+  title: string;
+  originalName: string;
+  extension: string;
+  sizeBytes: number;
+  durationSeconds: number | null;
+  addedAt: number;
+  hasCover: boolean;
+  converted: boolean;
+};
+
+export type VaultStatus = { exists: boolean; unlocked: boolean };
+
+export type VaultEvent =
+  | { type: "progress"; path: string; percent: number; stage: "preparing" | "encrypting" }
+  /** `originalKept`: a readable copy could not be removed (in use). */
+  | { type: "added"; path: string; item: VaultItem; originalKept?: boolean }
+  | { type: "failed"; path: string; code: string }
+  | { type: "done" }
+  | { type: "locked"; reason: string };
 
 export type LibraryLocation = {
   path: string;
@@ -192,6 +217,20 @@ export type DesktopBridge = {
   cancelPlayback?(id: string): Promise<void>;
   /** Subtitle tracks of a library video (files beside it, text streams in it). */
   readSubtitles?(relativePath: string): Promise<Subtitles>;
+  /** Private folder (encrypted vault); absent in the browser preview. */
+  vault?: {
+    status(): Promise<VaultStatus>;
+    create(password: string): Promise<VaultStatus>;
+    unlock(password: string): Promise<VaultStatus>;
+    lock(): Promise<void>;
+    changePassword(oldPassword: string, newPassword: string): Promise<void>;
+    items(): Promise<VaultItem[]>;
+    cover(id: string): Promise<string | null>;
+    add(relativePaths: string[]): Promise<void>;
+    restore(id: string): Promise<string>;
+    remove(id: string): Promise<void>;
+    subscribe(listener: (event: VaultEvent) => void): Promise<() => void>;
+  };
   /** Picks .srt/.vtt files and copies them next to the video; null if cancelled. */
   addSubtitles?(relativePath: string): Promise<number | null>;
   subscribePlayback?(listener: (event: PlaybackEvent) => void): Promise<() => void>;
@@ -247,6 +286,28 @@ export const desktopBridge: DesktopBridge = {
   preparePlayback: (relativePath, support) => invoke<PlaybackPlan>("prepare_playback", { relativePath, dolby: support?.dolby ?? false }),
   cancelPlayback: (id) => invoke("cancel_playback", { id }),
   readSubtitles: (relativePath) => invoke<Subtitles>("read_subtitles", { relativePath }),
+  vault: {
+    status: () => invoke<VaultStatus>("vault_status"),
+    create: (password) => invoke<VaultStatus>("vault_create", { password }),
+    unlock: (password) => invoke<VaultStatus>("vault_unlock", { password }),
+    lock: () => invoke("vault_lock"),
+    changePassword: (oldPassword, newPassword) => invoke("vault_change_password", { old: oldPassword, new: newPassword }),
+    items: () => invoke<VaultItem[]>("vault_items"),
+    cover: (id) => invoke<string | null>("vault_cover", { id }),
+    add: (relativePaths) => invoke("vault_add", { relativePaths }),
+    restore: (id) => invoke<string>("vault_restore", { id }),
+    remove: (id) => invoke("vault_delete", { id }),
+    subscribe: async (listener) => {
+      const stops = await Promise.all([
+        listen<{ path: string; percent: number; stage: "preparing" | "encrypting" }>("vault-progress", ({ payload }) => listener({ type: "progress", ...payload })),
+        listen<{ path: string; item: VaultItem; originalKept?: boolean }>("vault-added", ({ payload }) => listener({ type: "added", ...payload })),
+        listen<{ path: string; code: string }>("vault-failed", ({ payload }) => listener({ type: "failed", ...payload })),
+        listen("vault-done", () => listener({ type: "done" })),
+        listen<{ reason: string }>("vault-locked", ({ payload }) => listener({ type: "locked", reason: payload?.reason ?? "idle" })),
+      ]);
+      return () => stops.forEach((stop) => stop());
+    },
+  },
   addSubtitles: (relativePath) => invoke<number | null>("add_subtitles", { relativePath }),
   subscribePlayback: async (listener) => listen<PlaybackEvent>("playback-prepare", ({ payload }) => listener(payload)),
   closeWindow: () => invoke("window_close"),

@@ -832,3 +832,77 @@ def test_a_title_used_by_any_saved_media_or_cover_gets_a_number(monkeypatch, tmp
 
     # Clip is taken by a song and "clip (2)" by a cover (case-insensitive).
     assert result.relative_path == "video/Clip (3).mp4"
+
+
+@pytest.mark.parametrize(
+    ("url", "site"),
+    [
+        ("https://www.xnxx.com/video-1cbavz1b/the_best_pmv_ever_created", "XNXX"),
+        ("https://www.redtube.com/267756101", "RedTube"),
+        ("https://www.redgifs.com/watch/weeklyshadowyasianlion", "RedGifs"),
+        ("https://www.empflix.com/amateur-porn/some-title/video123456", "EMPFlix"),
+        ("https://www.empflix.com/videos/some-title-123456", "EMPFlix"),
+        ("https://www.moviefap.com/videos/731aacc59c5e7124a11e/baldgirl-shaza.html", "MovieFap"),
+        ("https://thisvid.com/videos/pissing-in-the-open3/", "ThisVid"),
+        ("https://hclips.com/videos/6291073/title/", "HClips"),
+        ("https://hdzog.tube/videos/67063/title/", "HDZog"),
+        ("https://inporn.com/video/517897/title/", "InPorn"),
+        ("https://txxx.com/videos/16574965/title/", "Txxx"),
+        ("https://www.txxx.tube/videos/16574965/title/", "Txxx"),
+        ("https://vxxx.com/video-68925/", "VXXX"),
+        ("https://voyeurhit.tube/videos/332875/title/", "VoyeurHit"),
+    ],
+)
+def test_desktop_policy_accepts_the_new_adapters(url: str, site: str):
+    assert AdapterPolicy().validate(url).site == site
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.xnxx.com/search/pmv",
+        "https://www.redtube.com/?search=pmv",
+        "https://www.redgifs.com/users/someone",
+        "https://www.moviefap.com/search/pmv/",
+        "https://thisvid.com/search/?q=pmv",
+        "https://txxx.com/categories/amateur/",
+        # yt-dlp's extractors for these are broken (see adapters.py).
+        "https://beeg.com/-0142838797737057",
+        "https://rule34video.com/video/4676122/title/",
+        "https://www.4tube.com/videos/209733/title",
+        "https://www.porntube.com/videos/title_70897",
+    ],
+)
+def test_desktop_policy_rejects_listing_pages_and_broken_sites(url: str):
+    with pytest.raises(DesktopPolicyError):
+        AdapterPolicy().validate(url)
+
+
+def _video_labels(formats: list[dict[str, object]]) -> list[str]:
+    inspected = inspect_url(
+        "https://txxx.com/videos/16574965/title/",
+        AdapterPolicy(),
+        extractor=lambda _url, _options: {"title": "Example", "formats": formats},
+    )
+    return [item.label for item in inspected.result.formats if item.kind == "video"]
+
+
+def test_a_plain_file_without_codec_details_is_offered_as_video():
+    # The Txxx network's only format: no codecs, no size, just "hq.mp4".
+    assert _video_labels([{"format_id": "hq.mp4", "ext": "mp4", "protocol": "https"}]) == ["Video MP4"]
+
+
+def test_a_file_of_unknown_quality_is_hidden_beside_labelled_heights():
+    # XNXX lists "low"/"high" files next to its HLS heights.
+    formats = [
+        {"format_id": "low", "ext": "mp4"},
+        {"format_id": "high", "ext": "mp4"},
+        {"format_id": "hls-360p", "ext": "mp4", "height": 360},
+        {"format_id": "hls-1080p", "ext": "mp4", "height": 1080},
+    ]
+    assert _video_labels(formats) == ["1080p MP4", "360p MP4"]
+
+
+def test_codec_less_non_video_files_are_not_offered_as_video():
+    with pytest.raises(ValueError, match="no_formats"):
+        _video_labels([{"format_id": "sb0", "ext": "mhtml"}])

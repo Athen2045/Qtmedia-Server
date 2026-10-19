@@ -26,16 +26,19 @@ export type PlayableSource =
  * AVI, AC-3 audio …). Closing the player stops an unfinished preparation.
  */
 export function usePlayableSource(bridge: DesktopBridge, relativePath: string): PlayableSource {
+  // Private folder videos were made playable when they went in; they stream
+  // decrypted from `vault/<id>.<ext>`.
+  const vault = relativePath.startsWith("vault/");
   const [source, setSource] = useState<PlayableSource>(() => (
     !bridge.mediaUrl ? { kind: "unavailable" }
-      : bridge.preparePlayback ? { kind: "checking" }
+      : bridge.preparePlayback && !vault ? { kind: "checking" }
         : { kind: "ready", src: bridge.mediaUrl(relativePath) }
   ));
 
   useEffect(() => {
     const mediaUrl = bridge.mediaUrl;
     if (!mediaUrl) return;
-    if (!bridge.preparePlayback) {
+    if (!bridge.preparePlayback || relativePath.startsWith("vault/")) {
       setSource({ kind: "ready", src: mediaUrl(relativePath) });
       return;
     }
