@@ -89,6 +89,27 @@ describe("Video page", () => {
     expect(screen.queryByText("Player coming soon")).not.toBeInTheDocument();
   });
 
+  it("opens the Private folder from a small lock in the toolbar, and back", async () => {
+    const vault = {
+      status: vi.fn().mockResolvedValue({ exists: true, unlocked: true }),
+      subscribe: vi.fn().mockResolvedValue(() => undefined),
+      items: vi.fn().mockResolvedValue([]),
+    };
+    const bridge = { ...bridgeWith(library), vault } as unknown as DesktopBridge;
+    render(<VideoPage bridge={bridge} onPlayVideo={vi.fn()} />);
+    const lock = await screen.findByRole("button", { name: "Private folder" });
+    expect(lock).toHaveAttribute("aria-pressed", "false");
+    await vi.waitFor(() => expect(lock).toHaveAttribute("title", "Private folder (unlocked)"));
+    // No big Private card above the videos any more.
+    expect(screen.queryByText("Encrypted, password protected")).not.toBeInTheDocument();
+
+    fireEvent.click(lock);
+    expect(await screen.findByLabelText("Private folder", { selector: ".vault-view" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Private folder" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Private folder" }));
+    expect(await screen.findByRole("list", { name: "All videos" })).toBeInTheDocument();
+  });
+
   it("offers a retry when the library cannot be read", async () => {
     const bridge = bridgeWith(new Error("unreadable"));
     render(<VideoPage bridge={bridge} />);

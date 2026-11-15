@@ -25,6 +25,7 @@ Qtmedia/var/
 # Documentation directories
 docs/
 Qtmedia/docs/
+Math.md
 # macOS and editor files
 .DS_Store
 .idea/
@@ -38,3 +39,7 @@ Qtmedia/docs/
 # Local agent context/state
 /agents.md
 /context.md
+/QtmediaApp/agent.md
+/QtmediaApp/context.md
+/QtmediaApp/skill.md
+/QtmediaApp/design/

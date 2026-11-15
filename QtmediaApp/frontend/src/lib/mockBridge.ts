@@ -268,6 +268,8 @@ export function createMockBridge(options: MockBridgeOptions = {}): DesktopBridge
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    // A Private folder that lives in memory: any password unlocks it.
+    vault: mockVault(),
   };
   return bridge;
 }
@@ -275,4 +277,23 @@ export function createMockBridge(options: MockBridgeOptions = {}): DesktopBridge
 export function mockOptionsFromLocation(search: string): MockBridgeOptions {
   const library = new URLSearchParams(search).get("library");
   return { library: library === "empty" || library === "error" ? library : "full" };
+}
+
+/** In-memory Private folder for the browser preview (any password works). */
+function mockVault(): NonNullable<DesktopBridge["vault"]> {
+  let unlocked = false;
+  const status = () => ({ exists: true, unlocked });
+  return {
+    status: async () => status(),
+    create: async () => { unlocked = true; return status(); },
+    unlock: async () => { unlocked = true; return status(); },
+    lock: async () => { unlocked = false; },
+    changePassword: async () => undefined,
+    items: async () => [],
+    cover: async () => null,
+    add: async () => undefined,
+    restore: async () => "",
+    remove: async () => undefined,
+    subscribe: async () => () => undefined,
+  };
 }

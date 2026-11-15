@@ -1,44 +1,46 @@
 # QtmediaApp
 
-Privacy-focused desktop application for inspecting approved direct media links,
-choosing an available video resolution or MP3 (192 kbps), downloading locally,
-and browsing the resulting media library.
+QtmediaApp is the Tauri desktop interface for inspecting approved direct media
+links, choosing a video resolution or MP3 download, and browsing a local media
+library. It is independent from the terminal CLI in [`../Qtmedia`](../Qtmedia).
 
-QtmediaApp uses Tauri 2, React/TypeScript, and a long-lived PyInstaller Python
-sidecar over JSON Lines stdin/stdout. It does not expose a localhost server.
-The existing `Qtmedia/` CLI remains independent from the desktop application.
+## Stack
 
-Implemented in the first usable build:
+- **Desktop shell:** Tauri 2 and Rust.
+- **UI:** React, TypeScript, and Vite.
+- **Download engine:** Python sidecar packaged with PyInstaller.
+- **Communication:** JSON Lines over the local process stdin/stdout pipe; no
+  localhost server.
+- **Media:** FFmpeg/ffprobe, Video.js, and a native Rust audio engine.
 
-- mockup-matched Home shell with five accessible navigation destinations;
-- explicit desktop adapter policy for the seven original providers plus
-  YouTube, with private-target rejection;
-- grouped per-height MP4 and MP3 format selection, progress, cancellation, and
-  local artwork;
-- supplied Material Search, Home, Settings, Content Copy, Music, Video, and
-  Folder icons with accessible labels;
-- separate provider/network availability errors from local sidecar failures;
-- private application-data library with Files filters, search, sorting, and
-  validated OS open actions;
-- Windows frameless controls and macOS native-titlebar configuration;
-- MSI and NSIS Windows release packaging with reported payload sizes (no fixed size limit).
+## Setup
 
-## Development
+Requirements include Node.js, pnpm, Rust with the MSVC target, WebView2, and
+the platform build tools.
 
-Follow [`setup.md`](setup.md) for prerequisites and architecture. After the
-Python environment and frontend dependencies exist:
+From `QtmediaApp/` in PowerShell:
 
 ```powershell
 ./scripts/prepare-ffmpeg.ps1
+./scripts/prepare-deno.ps1
 ./sidecar/build-sidecar.ps1
 cd frontend
-pnpm test --run
+pnpm install --frozen-lockfile
 pnpm desktop:dev
 ```
 
 Build Windows installers with `pnpm desktop:build`. Generated binaries and
-build trees are intentionally ignored; prepare FFmpeg and rebuild the sidecar
-before each clean Tauri build.
+build output are ignored; rebuild the pinned runtimes and sidecar before a
+clean release build.
 
-Before working in this directory, read `context.md`, then `agent.md`, then
-`skill.md`. The context file must be updated after every meaningful change.
+## Checks
+
+```bash
+pytest -q sidecar/tests
+pnpm --dir frontend test --run
+pnpm --dir frontend build
+cargo test --locked --manifest-path src-tauri/Cargo.toml
+```
+
+See [`setup.md`](setup.md) for the complete setup, architecture, and release
+guide.

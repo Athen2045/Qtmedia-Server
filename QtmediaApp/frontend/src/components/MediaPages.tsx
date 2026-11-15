@@ -96,10 +96,25 @@ export function VideoPage({ bridge, refreshToken = 0, onGoHome, onShowDownload, 
   }, [saved]);
   const play = (entry: LibraryEntry, list: LibraryEntry[]) => (onPlayVideo ? onPlayVideo(entry, list) : void bridge.openMedia(entry.relativePath));
   const [vaultOpen, setVaultOpen] = useState(false);
+  const vaultUnlocked = useVaultUnlocked(bridge, vaultOpen);
+  // A quiet lock button in the toolbar opens the Private folder and, pressed
+  // again, returns to the library.
+  const vaultButton = bridge.vault && !failed ? (
+    <button
+      type="button"
+      className={`btn btn-plain btn-icon vault-toggle ${vaultUnlocked ? "is-unlocked" : ""}`}
+      aria-label="Private folder"
+      aria-pressed={vaultOpen}
+      title={vaultOpen ? "Back to videos" : vaultUnlocked ? "Private folder (unlocked)" : "Private folder"}
+      onClick={() => setVaultOpen(!vaultOpen)}
+    >
+      <Icon name={vaultUnlocked ? "lockOpen" : "lock"} />
+    </button>
+  ) : null;
   if (vaultOpen && bridge.vault) {
     return (
       <section className="page media-page" aria-labelledby="video-title">
-        <Toolbar title="Video" onShowDownload={onShowDownload} />
+        <Toolbar title="Video" onShowDownload={onShowDownload}>{vaultButton}</Toolbar>
         <span id="video-title" className="sr-only">Video</span>
         <div className="page-body">
           <VaultView bridge={bridge} libraryVideos={items} onBack={() => setVaultOpen(false)} onPlayVideo={onPlayVideo} onLibraryChanged={retry} />
@@ -112,16 +127,10 @@ export function VideoPage({ bridge, refreshToken = 0, onGoHome, onShowDownload, 
       <Toolbar title="Video" badge={onPlayVideo ? undefined : "Player coming soon"} onShowDownload={onShowDownload}>
         {!loading && !failed && items.length ? <span className="toolbar-count">{items.length} {items.length === 1 ? "video" : "videos"}</span> : null}
         <SortMenu value={sort} onChange={setSort} label="Sort video" />
+        {vaultButton}
       </Toolbar>
       <span id="video-title" className="sr-only">Video</span>
       <div className="page-body">
-        {bridge.vault && !failed ? (
-          <button type="button" className="vault-tile" onClick={() => setVaultOpen(true)}>
-            <span className="vault-tile__icon" aria-hidden="true"><Icon name="lock" /></span>
-            <span className="vault-tile__copy"><strong>Private</strong><span>Encrypted, password protected</span></span>
-            <Icon name="chevron" />
-          </button>
-        ) : null}
         <ListStates loading={loading} failed={failed} retry={retry} empty={items.length === 0} kind="video" onGoHome={onGoHome} />
         {!failed && items.length ? (
           <ul className="video-grid" aria-label="All videos">
@@ -133,6 +142,25 @@ export function VideoPage({ bridge, refreshToken = 0, onGoHome, onShowDownload, 
       </div>
     </section>
   );
+}
+
+/** Whether the Private folder is unlocked; re-read when it closes, cleared when it locks. */
+function useVaultUnlocked(bridge: DesktopBridge, open: boolean) {
+  const [unlocked, setUnlocked] = useState(false);
+  useEffect(() => {
+    const vault = bridge.vault;
+    if (!vault) return;
+    let active = true;
+    let unsubscribe: (() => void) | null = null;
+    vault.status().then((status) => { if (active) setUnlocked(status.unlocked); }, () => undefined);
+    void vault.subscribe((event) => { if (event.type === "locked") setUnlocked(false); })
+      .then((stop) => { if (active) unsubscribe = stop; else stop(); }, () => undefined);
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, [bridge, open]);
+  return unlocked;
 }
 
 function LevelBars() {
