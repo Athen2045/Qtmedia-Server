@@ -1,36 +1,29 @@
 # Qtmedia CLI
 
-Qtmedia is the standalone command-line application in this workspace. It
-searches configured media sources, inspects candidate links with yt-dlp, and
-downloads a selected result to the local machine.
+The Qtmedia CLI is the standalone terminal interface for searching supported
+media sources, inspecting available formats, and downloading selected media.
+It uses the same Python download engine that powers the desktop sidecar, while
+keeping its commands and runtime data independent.
 
-## Requirements
+## Stack
 
-- Python 3.11 or newer
-- FFmpeg and `ffprobe` on `PATH`
-- Network access to the configured sources
+Python 3.11+, Typer, Rich, Requests, Beautiful Soup, RapidFuzz, Pillow,
+yt-dlp, and FFmpeg.
 
-## Install
+## Setup
 
-Run these commands from the `Qtmedia` directory:
+Requirements: Python 3.11+, FFmpeg and `ffprobe` on `PATH`, and network access
+to the configured sources.
 
 ```bash
+cd Qtmedia
 python -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate             # Windows: .venv\Scripts\Activate.ps1
 python -m pip install -e ".[dev]"
 ```
 
-On Windows PowerShell:
-
-```powershell
-py -3.11 -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -e ".[dev]"
-```
-
-Install optional browser impersonation support with
-`python -m pip install -e ".[impersonation]"` when a permitted source requires
-it.
+Install `.[impersonation]` when a permitted source requires browser
+impersonation support.
 
 ## Use
 
@@ -39,16 +32,13 @@ qt search "title"
 qt download https://example.com/media
 ```
 
-The `qtmedia-search` and `qtmedia-download` console aliases remain available
-for scripts. On Windows, `main.bat` starts the interactive menu using the
-project virtual environment.
+The `qtmedia-search` and `qtmedia-download` aliases remain available for
+scripts. On Windows, `main.bat` starts the interactive menu.
 
-Runtime data is kept under `var/downloads/` and `var/cache/` only. Do not
-commit downloaded media, cookies, credentials, or cache databases.
+Runtime data stays under `var/downloads/` and `var/cache/`. Do not commit
+downloaded media, cookies, credentials, or cache databases.
 
-## Development
-
-From this directory:
+## Checks
 
 ```bash
 ruff check .
@@ -56,6 +46,5 @@ pytest -q
 python -m compileall -q src tests main.py benchmarks
 ```
 
-See [`instructions.md`](instructions.md) for the CLI contribution workflow.
-Workspace architecture notes and CLI design documents are kept in local
-`docs/` folders that are not tracked in this repository.
+See [`instructions.md`](instructions.md) for CLI workflow guidance and
+[`context.md`](context.md) for current project state.

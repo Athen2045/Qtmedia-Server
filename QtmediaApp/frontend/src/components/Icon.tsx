@@ -38,6 +38,7 @@ const paths = {
   volume: <><path d="M4.5 9.5v5H8l4.5 4V5.5L8 9.5z" /><path d="M16 9.2a4 4 0 0 1 0 5.6M18.6 6.6a7.6 7.6 0 0 1 0 10.8" /></>,
   mute: <><path d="M4.5 9.5v5H8l4.5 4V5.5L8 9.5z" /><path d="m16 9.5 5 5m0-5-5 5" /></>,
   lock: <><rect x="5" y="10.5" width="14" height="9.5" rx="3" /><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" /></>,
+  lockOpen: <><rect x="5" y="10.5" width="14" height="9.5" rx="3" /><path d="M8.5 10.5V8a3.5 3.5 0 0 1 6.8-1.2" /></>,
   info: <><circle cx="12" cy="12" r="8.5" /><path d="M12 11v5M12 8h.01" /></>,
   more: <><circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none" /></>,
   queue: <><path d="M4 7h12M4 12h12M4 17h7" /><path d="M17 14v6l4-3z" fill="currentColor" /></>,
